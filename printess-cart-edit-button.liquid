@@ -1,0 +1,149 @@
+{% comment %}
+  Renders the printess edit button inside the cart.
+  Version 2.6
+  
+  Accepts:
+  - item: {Object} cart line item.
+  - classes: {String} classes to use for styling.
+  - label: {String} the label that should be used for the edit button.
+  - shopToken: {String} Your printess shop token.
+  - startupLogoUrl: {String} Url for the startup logo of the editor that should be displayed on load (requires premium account),
+  - showStartupAnimation: {Boolean} The stars startup animation should be displayed.
+  - hidePricesInEditor: {Boolean} The editor should display product prices.
+  - editorVersion: {String} The editor version that should be loaded "" for release; "/v/nightly" for dev.
+  - legalText: {String} The legal text that should be displayed inside the editor together with the price.
+  - theme: {String} The theme the editor should be loaded with.
+  - showProductName: {Boolean} If set to false, the editor will not display the product name.
+  - showAlertOnTabClose: {Boolean} If set to true, a warning is shown in case the editor is open and someone closes the current tab.
+  - startupBackgroundColor: {String} The background color for the startup screen
+  - showSplitterGridSizeButton: {Boolean} Set to false to hide the Gridsize Button
+  - additionalAttachParams: {Object} Additional startup params
+  - duplicateAndPersonalizeText: {String} Will show a duplicate & personalize link that enables the customer to open the current basket item, modify it and add it as a second
+  - graphQlToken: {String}: The App Access Token for the Graphql Api
+  - forceCartItemCleanup: {Boolean}: Forces the cleanup of cart items that have noot been deleted correctly due to other scripts
+  Usage:
+  {% render 'printess-cart-edit-button',
+    item: item,
+    classes: 'button_class_1 etc',
+    label: 'Edit',
+    shopToken: "",
+    startupLogoUrl: "",
+    showStartupAnimation: true,
+    hidePricesInEditor: false,
+    editorVersion: "/v/nightly",
+    legalText: "incl. tax, excl. shipping",
+    theme: "theme01",
+    showProductName: true,
+    showAlertOnTabClose: true,
+    startupBackgroundColor: "#000000",
+    showSplitterGridSizeButton: false,
+    additionalAttachParams: {},
+    duplicateAndPersonalizeText: "",
+    graphQlToken: "",
+    forceCartItemCleanup: false
+  %}
+{% endcomment %}
+
+{%  if item.properties._printessSaveToken != blank %}
+<script id="printess_script_{{ item.key | replace: "-", "_" | replace: ":", "_" }}">
+  function getPrintessEditor() {
+    if(!getPrintessEditor.editor) {
+      getPrintessEditor.editor = new PrintessShopifyCart({ displayProductName: !({{showProductName | json}} === false),
+                                                                                                                shopToken: "{{ shopToken }}",
+                                                                                                                "startupLogoUrl": "{{ startupLogoUrl }}",
+                                                                                                                "showStartupAnimation": {{ showStartupAnimation }},
+                                                                                                                "hidePricesInEditor": {{ hidePricesInEditor }},
+                                                                                                                shopMoneyFormat: "{{ shop.money_format }}",
+                                                                                                                "editorVersion": {{ editorVersion | json }},
+                                                                                                                "showAlertOnTabClose": {{showAlertOnTabClose | json}} === true,
+                                                                                                                "startupBackgroundColor": "{{startupBackgroundColor}}" || "#000000",
+                                                                                                                "graphQlToken": {{graphQlToken | json}} || ""
+                                                                                                              });
+    }
+
+    return getPrintessEditor.editor;
+  }
+
+  function openPrintessEditor{{ item.key | replace: "-", "_" | replace: ":", "_" }}(keepOriginalBasketItem = false) {
+    const basketItem = {{ item | json }};
+    const basketItemProperties = {{item.properties | json}};
+
+    if(basketItemProperties) {
+      basketItem.properties = {};
+      basketItemProperties.forEach((prop) => {
+        if(prop.length > 1) {
+          basketItem.properties[prop[0]] = prop[1];
+        } else {
+          basketItem.properties[prop[0]] = "";
+        }
+      });
+    }
+
+    if(basketItem.options_with_values) {
+      basketItem.options_with_values.forEach((x) => {
+        basketItem.properties[x.name] = x.value;
+      });
+    }
+
+    const editor = getPrintessEditor();
+
+    if(!editor) {
+      return;
+    }
+
+    let attachParams = null;
+
+    try {attachParams = JSON.parse({{ additionalAttachParams | json }});}catch(e){}
+    
+    const settings = {
+      basketItemId: {{ item.key | json }},
+      basketItemOptions: basketItem.properties,
+      productId: basketItem.product_id,
+      quantity: basketItem.quantity,
+      legalText: {% if legalText != blank %}{{ legalText | json }}{% else %}""{% endif %},
+      theme: {% if theme != blank %}"{{ theme }}"{% else %}""{%endif%},
+      additionalAttachParams: attachParams,
+      keepOriginalBasketItem: keepOriginalBasketItem,
+      displayProductName: !({{showProductName | json}} === false),
+      /*,onAddToBasket: function(saveToken, thumbnailUrl) {
+
+        },
+
+        onSave: function(saveToken, thumbnailUrl) {
+        
+      }*/
+    };
+
+    {% if showSplitterGridSizeButton != null %}settings["showSplitterGridSizeButton"] = {{showSplitterGridSizeButton | json}};{% endif %}
+    
+    editor.show(settings);
+  }
+</script>
+
+{% if template == 'cart' and forceCartItemCleanup == true %}
+<script>
+  const initCleanup{{ item.key | replace: "-", "_" | replace: ":", "_" }} = function (retries = 0) {
+    if(typeof PrintessShopifyCart !== "undefined") {
+      PrintessShopifyCart.deleteUndeletedBasketItem().then(() => {
+
+      });
+    } else {
+      if(retries < 20)
+        setTimeout(function() {
+          initCleanup{{ item.key | replace: "-", "_" | replace: ":", "_" }}(retries + 1);
+        }, 100);
+    }
+  };
+
+  addEventListener("DOMContentLoaded", function() {
+    initCleanup{{ item.key | replace: "-", "_" | replace: ":", "_" }}();
+  });
+</script>
+{% endif %}
+
+<span style="margin-top: 20px;" onclick='showPrintessEditorFallback("{{ item.key | replace: "-", "_" | replace: ":", "_" }}", 0)' id="printessCustomizeButton{{ item.key | replace: "-", "_" | replace: ":", "_" }}" class="{{ classes }}">{{ label | escape }}</span>
+
+  {% if duplicateAndPersonalizeText != blank %}
+    <span style="margin-top: 20px;" onclick='showPrintessEditorFallback("{{ item.key | replace: "-", "_" | replace: ":", "_" }}", 0, true)' id="printessDuplicateButton{{ item.key | replace: "-", "_" | replace: ":", "_" }}" class="{{ classes }}">{{ duplicateAndPersonalizeText | escape }}</span>
+  {% endif %}
+{%  endif %}

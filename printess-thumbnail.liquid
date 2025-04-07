@@ -1,0 +1,21 @@
+{% comment %}
+    Renders the printess thumbnail to the cart
+    Version 2.6
+
+    Accepts:
+    - item: {Object} Cart line item
+    - width: {Number} The image width
+    Usage:
+    {% render 'printess-thumbnail',
+      item: item,
+      width: 150
+    %}
+{% endcomment %}
+
+<img
+  src="{% if item.properties._printessThumbnail != blank %}{{ item.properties._printessThumbnail }}{% else %}{{ item.image | image_url: width: 300 }}{% endif %}"
+  class="cart-item__image"
+  alt="{{ item.image.alt | escape }}"
+  loading="lazy"
+  width="{{ width }}"
+>

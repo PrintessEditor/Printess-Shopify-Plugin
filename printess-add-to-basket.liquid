@@ -1,0 +1,328 @@
+{% comment %}
+    Renders the printess add to basket button
+    Version 2.6
+
+    Accepts:
+    - product: {Object} Product object.
+    - buttonLabel: {String} The button label that should be used for the design button.
+    - buttonClasses: {String} The add to basket classes that should be used for styling the button.
+    - shopToken: {String} The Printess shop token.
+    - startupLogoUrl: {String} The url to the logo that should be displayed at the editor startup.
+    - showStartupAnimation: {Boolean} The animated stars should be shown on startup.
+    - hidePricesInEditor: {Boolean} The editor should not display prices.
+    - editorVersion: {Boolean} The sub directory of the embed html in order to.
+    - legalText: {String} The legal text that should be displayed inside the editor together with the price.
+    - theme: {String} The theme the editor should be loaded with.
+    - showProductName: {Boolean} If set to false, the editor will not display the product name.
+    - showAlertOnTabClose: {Boolean} If set to true, a warning is shown in case the editor is open and someone closes the current tab.
+    - startupBackgroundColor: {String} The background color for the startup screen
+    - showSplitterGridSizeButton: {Boolean} Set to false to hide the Gridsize Button
+    - additionalAttachParams: {Object} Additional startup params,
+    - priceDisplayElementSelector: {String} CSS selector to select the element that contains the display price (in case it is changed by other plugins without having variant price support)
+    - ignoreDataOptionIndex: {Boolean}
+    - productFormSelector: {String} The css selector for the product form
+    - productButtonSelector: {String} The css selector for the add to basket button
+    - legacyAddToBasket: {Boolean} Do not use the add to basket button to submit the item to the basket, but add it via ajax call
+    Usage:
+    {% render 'printess-add-to-basket',
+      product: product,
+      buttonLabel: "",
+      buttonClasses: "",
+      shopToken: "",
+      startupLogoUrl: "",
+      showStartupAnimation: true,
+      hidePricesInEditor: false,
+      editorVersion: "/v/nightly",
+      legalText: "incl. tax, excl. shipping",
+      theme: "theme01",
+      showProductName: true,
+      showAlertOnTabClose: true,
+      startupBackgroundColor: "#000000",
+      showSplitterGridSizeButton: false,
+      additionalAttachParams: {},
+      priceDisplayElementSelector: "",
+      ignoreDataOptionIndex: false,
+      productFormSelector: "",
+      productButtonSelector: "",
+      legacyAddToBasket: true
+    %}
+{% endcomment %}
+
+{%- liquid
+  if product.metafields and product.metafields.printess
+    if product.metafields.printess.templateName
+      assign printessTemplateName = product.metafields.printess.templateName
+    else
+      assign printessTemplateName = ""
+    endif
+
+    if product.metafields.printess.optionNameMapping
+      assign printessOptionNameMapping = product.metafields.printess.optionNameMapping
+    else
+      assign printessOptionNameMapping = ""
+    endif
+
+    if product.metafields.printess.productType
+      assign printessProductType = product.metafields.printess.productType
+    else
+      assign printessProductType = ""
+    endif
+    
+    if product.metafields.printess.productDefinitionId
+      assign printessProductDefinitionId = product.metafields.printess.productDefinitionId
+    else
+      assign printessProductDefinitionId = -1
+    endif
+
+    if product.metafields.printess.mergeTemplates
+      assign printessMergeTemplates = product.metafields.printess.mergeTemplates
+    else
+      assign printessMergeTemplates = ""
+    endif
+    
+    if settings.printess_outputdpi and settings.printess_outputdpi != blank
+      assign printessOutputDpi = settings.printess_outputdpi
+    else
+      assign printessOutputDpi = 300
+    endif
+    
+    if product.metafields.printess.dpi
+      assign printessOutputDpi = product.metafields.printess.dpi
+    endif
+    
+    if settings.printess_outputformat and settings.printess_outputformat != blank
+      assign printessOutputFormat = settings.printess_outputformat
+    else
+      assign printessOutputFormat = "pdf"
+    endif
+    
+    if product.metafields.printess.outputFormat
+      assign printessOutputFormat = product.metafields.printess.outputFormat
+    endif
+
+    if product.metafields.printess.tableQuantityFormField
+      assign tableQuantityFormField = product.metafields.printess.tableQuantityFormField
+    endif
+  endif
+-%}
+
+ <script id="printess_script_{{ product.id | json }}">
+  var showPrintessEditor{{ product.id | json }} = (saveToken = null, keepOriginalBasketItem = false) => {
+    const printessButton = window.document.getElementById("printessCustomizeButton{{ product.id | json }}");
+
+    const printessTemplateName = {{ printessTemplateName | json }};
+    const product = {{ product | json }};
+    const variantMetaData = {};
+    let metaJson = {};    
+  
+    {%- for variant in product.variants -%}
+      {%- if variant.metafields.printess -%}
+        {% if variant.metafields.printess.displayEditor == true or variant.metafields.printess.templateName %}
+          metaJson = {{ variant.metafields.printess | json }};
+          variantMetaData[{{ variant.id }}] = metaJson;
+        {%- endif -%}
+      {%- endif -%}
+    {%- endfor -%}
+
+    let currentOption;
+    product.optionDetails = [];
+
+    {%- for option in product.options_with_values -%}
+      currentOption = {
+        "name": {{ option.name | json }},
+        "position": {{ option.position | json }},
+        "values": []
+      };
+
+      {%- for value in option.values -%}
+        currentOption.values.push({
+          "name": {{ value | json }},
+          "id": {{ value.id | json }},
+          "available": {{ value.available | json }}
+        });
+      {%- endfor -%}
+
+      product.optionDetails.push(currentOption);
+    {%- endfor -%}
+
+    if(!window || !window["printessEditor" + product.id]) {
+      return;
+    }
+
+    if(product && product.variants) {        
+      product.variants = product.variants.filter((x) => {
+        if(variantMetaData[x.id]) {
+          if(variantMetaData[x.id].hideFromEditor === true) {
+            return false;
+          }
+
+          if(variantMetaData[x.id].templateName) {
+            x.templateName = variantMetaData[x.id].templateName;
+          } else {
+            x.templateName = printessTemplateName || null;
+          }
+        }
+
+        return true;
+      });
+    }
+
+    let attachParams = null;
+
+    try {attachParams = JSON.parse({{ additionalAttachParams | json }});}catch(e){}
+
+    const additionalProperties = {};
+    let addedAdditionalProperties = false;
+
+
+    {% if product.metafields.printess.ignoreDropshipBundling %}
+      additionalProperties["ignoreDropshipBundling"] = true;
+      addedAdditionalProperties = true;
+    {% endif %}
+
+    {% if product.metafields.printess.dropshipBundlingId %}
+      additionalProperties["dropshipBundlingId"] = {{ product.metafields.printess.dropshipBundlingId | json }};
+      addedAdditionalProperties = true;
+    {% endif %}
+
+    {% if product.metafields.printess.uiVersion != blank %}
+      additionalProperties["uiVersion"] = "{{ product.metafields.printess.uiVersion | json }}";
+      addedAdditionalProperties = true;
+    {% endif %}
+
+    const settings = {
+      templateNameOrSaveToken: saveToken || printessTemplateName,
+      mergeTemplates: {{ printessMergeTemplates | json }},
+      product: product,
+      productDefinitionId: {{ printessProductDefinitionId | json }},
+      outputFormat: {{ printessOutputFormat | json}},
+      outputDpi: {{ printessOutputDpi | json }},
+      optionValueMappings: {{ printessOptionNameMapping | json }},
+      productType: {{ printessProductType | json }},
+      legalText: {% if legalText != blank %}{{ legalText | json }}{% else %}""{% endif %},
+      additionalAttachParams: attachParams,
+      additionalLineItemProperties: addedAdditionalProperties ? additionalProperties : null,
+      priceDisplayElementSelector: {{ priceDisplayElementSelector | json }},
+      tableQuantityField: {{ tableQuantityFormField | json }} || "",
+      legacyAddToBasket: {% if legacyAddToBasket == true %} true {% else %} false {% endif %}
+      /* ,onAddToBasket: function(saveToken, thumbnailUrl) {
+
+       },
+
+       onSave: function(saveToken, thumbnailUrl) {
+        
+       }*/
+    };
+
+    {% if product.metafields.printess.theme != blank %}
+      settings["theme"]= {{ product.metafields.printess.theme | json }};
+    {% else if theme != blank %}
+      settings["theme"]="{{ theme }}";
+    {%endif%}
+
+    if(settings["theme"]) {
+      const themeEdit = document.getElementById("printessTheme{{ product.id | json }}");
+
+      if(themeEdit) {
+        themeEdit.value = settings["theme"];
+      }
+    }
+
+  {% if showSplitterGridSizeButton != null %}settings["showSplitterGridSizeButton"] = {{showSplitterGridSizeButton | json}};{% endif %}
+
+    window["printessEditor" + product.id].show(settings);
+  }
+</script>
+
+<span onclick='showPrintessEditorFallback({{ product.id | json }}, 0, false)' id="printessCustomizeButton{{ product.id | json }}" class="{{ buttonClasses }}" style="display:none; justify-content: center;">
+  {{ buttonLabel | escape }}
+</span>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+      const editor = typeof initPrintessShopifyEditor !== "undefined" ? initPrintessShopifyEditor({
+                                                                                                    "theme": {% if product.metafields.printess.theme != blank %}{{ product.metafields.printess.theme | json }}{% else %}{{ theme | json }}{% endif %},
+                                                                                                    "shopToken": {{ shopToken | json }},
+                                                                                                    "startupLogoUrl": {{ startupLogoUrl | json }},
+                                                                                                    "showStartupAnimation": {% if showStartupAnimation == true %} true {% else %} false {% endif %},
+                                                                                                    "hidePricesInEditor": {% if hidePricesInEditor == true %} true {% else %} false {% endif %},
+                                                                                                    "editorVersion": {% if editorVersion != blank %} {{ editorVersion | json }} {% else %} "" {% endif %},
+                                                                                                    "shopMoneyFormat": "{{ shop.money_format }}",
+                                                                                                    "displayProductName": !({{showProductName | json}} === false),
+                                                                                                    "showAlertOnTabClose": {{showAlertOnTabClose | json}} === true,
+                                                                                                    "startupBackgroundColor": "{{startupBackgroundColor}}" || "#000000",
+                                                                                                    "ignoreDataOptionIndex": {% if ignoreDataOptionIndex == true %} true {% else %} false {% endif %},
+                                                                                                    "productFormSelector": "{{productFormSelector}}" || "",
+                                                                                                    "productButtonSelector": "{{productButtonSelector}}" || "",
+                                                                                                    "uiVersion": {% if product.metafields.printess.uiVersion != blank %} {{ product.metafields.printess.uiVersion | json }} {% else %} "" {% endif %}
+                                                                                                  }) : null;
+      let templateName = {{ printessTemplateName | json }};
+      const product = {{ product | json }};
+      const variantMetaData = {};
+      let metaJson = {};
+
+      if(!editor) {
+        return;
+      }
+
+      {%- for variant in product.variants -%}
+        {%- if variant.metafields.printess -%}
+          {% if variant.metafields.printess.displayEditor == true or variant.metafields.printess.templateName %}
+            metaJson = {{ variant.metafields.printess | json }};
+            variantMetaData[{{ variant.id }}] = metaJson;
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+
+      product.optionDetails = [];
+
+      {%- for option in product.options_with_values -%}
+        currentOption = {
+          "name": {{ option.name | json }},
+          "position": {{ option.position | json }},
+          "values": []
+        };
+
+        {%- for value in option.values -%}
+          currentOption.values.push({
+            "name": {{ value | json }},
+            "id": {{ value.id | json }},
+            "available": {{ value.available | json }}
+          });
+        {%- endfor -%}
+
+        product.optionDetails.push(currentOption);
+      {%- endfor -%}
+
+      if(product && product.variants) {
+        product.variants = product.variants.filter((x) => {
+          if(variantMetaData[x.id]) {
+            if(variantMetaData[x.id].hideFromEditor === true) {
+              return false;
+            }
+
+            if(variantMetaData[x.id].templateName) {
+              x.templateName = variantMetaData[x.id].templateName;
+            } else {
+              x.templateName = templateName || null;
+            }
+
+            if(variantMetaData[x.id].productDefinitionId) {
+              x.productDefinitionId = variantMetaData[x.id].productDefinitionId;
+            }
+          }
+
+          return true;
+        });
+      }
+
+      editor.initProductPage(templateName, product, variantMetaData, "printessCustomizeButton{{ product.id | json }}");
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const saveToken = urlParams.get('savetoken');
+
+      if(saveToken) {
+        showPrintessEditor{{ product.id | json }}(saveToken);
+      }
+    });
+</script>
