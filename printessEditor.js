@@ -2044,7 +2044,7 @@ const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketIte
 };
 const initPrintessShopifyEditor = (printessSettings) => {
     if (typeof window["printessShopifyEditor"] === "undefined") {
-        const addToBasketButtonSelector = printessSettings && printessSettings.productButtonSelector ? printessSettings.productButtonSelector : 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart';
+        const addToBasketButtonSelector = printessSettings && printessSettings.productButtonSelector ? printessSettings.productButtonSelector : 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart,.add-to-cart-button,#AddToCart';
         const editor = {
             productCache: {},
             productFormSelector: printessSettings && printessSettings.productFormSelector ? printessSettings.productFormSelector : 'form[data-type="add-to-cart-form"],form.product-single__form,form.shopify-product-form[id^=product-form-template],form[action="/cart/add"]',
