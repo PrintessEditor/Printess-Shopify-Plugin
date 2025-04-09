@@ -1,4 +1,4 @@
-/*Printess Shopify Integration Version: 2.6*/;class PrintessEditor {
+/*Printess Shopify Integration Version: 2.6*/class PrintessEditor {
     constructor(settings) {
         this.calculateCurrentPrices = async (priceInfo, context) => {
             const r = await this.getPriceCategories(context);
@@ -266,6 +266,11 @@
                         callbacks.onSaveAsync(evt.data.token);
                     }
                 }
+                case 'load': {
+                    if (callbacks && typeof callbacks.onLoadAsync === "function") {
+                        callbacks.onLoadAsync(context.templateNameOrSaveToken);
+                    }
+                }
                 default:
                     break;
             }
@@ -398,7 +403,7 @@
         }
         const startupParams = {};
         const loaderUrl = that.getLoaderUrl(this.Settings.editorUrl, this.Settings.editorVersion, startupParams);
-        const printessLoader = await import(loaderUrl);
+        const printessLoader = await import(/* webpackIgnore: true */ loaderUrl);
         let printessComponent = that.getPrintessComponent();
         if (printessComponent && printessComponent.editor) {
             printessComponent.style.display = "block";
@@ -451,6 +456,9 @@
                     if (typeof callbacks.onSaveAsync === "function") {
                         callbacks.onSaveAsync(saveToken);
                     }
+                },
+                loadTemplateCallback: (param) => {
+                    callbacks.onLoadAsync(attachParams.templateName);
                 }
             };
             const printess = await printessLoader.load(attachParams);
@@ -518,12 +526,21 @@
                     context.onSave(saveToken, "");
                 }
             },
+            onLoadAsync: async (currentTemplateNameOrSaveToken) => {
+                if (typeof context.onLoadAsync === "function") {
+                    await context.onLoadAsync(currentTemplateNameOrSaveToken);
+                }
+                else if (typeof context.onLoad === "function") {
+                    context.onLoad(currentTemplateNameOrSaveToken);
+                }
+            },
             onCloseTab: (evt) => {
                 evt.preventDefault();
                 evt.returnValue = '';
             }
         };
-        if (this.Settings.uiSettings && this.Settings.uiSettings.uiVersion === "bcui") {
+        const loweruiVersion = this.Settings.uiSettings && this.Settings.uiSettings.uiVersion ? this.Settings.uiSettings.uiVersion.toLowerCase().trim() : "";
+        if (loweruiVersion === "bcui" || loweruiVersion === "panelui") {
             that.showBcUiVersion(context, callbacks);
         }
         else {
