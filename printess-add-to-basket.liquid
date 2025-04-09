@@ -186,7 +186,7 @@
     {% endif %}
 
     {% if product.metafields.printess.uiVersion != blank %}
-      additionalProperties["uiVersion"] = "{{ product.metafields.printess.uiVersion | json }}";
+      additionalProperties["uiVersion"] = {{ product.metafields.printess.uiVersion | json }};
       addedAdditionalProperties = true;
     {% endif %}
 
