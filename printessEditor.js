@@ -462,6 +462,9 @@
                     if (typeof callbacks.onSaveAsync === "function") {
                         callbacks.onSaveAsync(saveToken);
                     }
+                    if (type && type === "close") {
+                        that.hideBcUiVersion(context, true);
+                    }
                 },
                 loadTemplateCallback: (param) => {
                     callbacks.onLoadAsync(attachParams.templateName);
