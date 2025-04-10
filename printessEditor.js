@@ -343,6 +343,10 @@
         return r;
     }
     ;
+    usePanelUi() {
+        const loweruiVersion = this.Settings.uiSettings && this.Settings.uiSettings.uiVersion ? this.Settings.uiSettings.uiVersion.toLowerCase().trim() : "";
+        return loweruiVersion === "bcui" || loweruiVersion === "panelui";
+    }
     async onPriceChanged(priceChangedInfo, context) {
         try {
             let priceInfo = null;
@@ -390,6 +394,8 @@
         if (typeof context.editorClosed === "function") {
             context.editorClosed(closeButtonClicked === true);
         }
+        //Hide the web page scrolling
+        document.body.classList.remove('hideAll');
     }
     async showBcUiVersion(context, callbacks) {
         const that = this;
@@ -539,8 +545,7 @@
                 evt.returnValue = '';
             }
         };
-        const loweruiVersion = this.Settings.uiSettings && this.Settings.uiSettings.uiVersion ? this.Settings.uiSettings.uiVersion.toLowerCase().trim() : "";
-        if (loweruiVersion === "bcui" || loweruiVersion === "panelui") {
+        if (this.usePanelUi()) {
             that.showBcUiVersion(context, callbacks);
         }
         else {
@@ -652,7 +657,7 @@
         }
     }
     hide(context, closeButtonClicked) {
-        if (this.Settings.uiSettings && this.Settings.uiSettings.uiVersion === "bcui") {
+        if (this.usePanelUi()) {
             const editor = this.getPrintessComponent();
             if (editor && editor.editor) {
                 editor.editor.ui.hide();
@@ -1695,6 +1700,29 @@ class PrintessShopifyCart {
                     }
                     that.lastSaveToken = saveToken;
                 }
+            },
+            onLoadAsync: async (currentTemplateNameOrSaveToken) => {
+                const callbackParams = {
+                    lastSaveToken: that.lastSaveToken,
+                    initialSaveToken: that.initialSaveToken,
+                    originalSaveToken: that.originalSaveToken,
+                    selectedVariant: await that.getVariantForFormFields(),
+                    formFieldValues: {
+                        ...that.basketItemOptions,
+                        ...that.basketItemVariantOptions
+                    },
+                    basketItemId: that.cartItemConfig.basketItemId || null,
+                    product: that.product
+                };
+                const conf = PrintessEditor && PrintessEditor.getGlobalShopSettings ? PrintessEditor.getGlobalShopSettings() : {};
+                try {
+                    if (conf && typeof conf.onLoad === "function") {
+                        conf.onLoad(currentTemplateNameOrSaveToken, callbackParams);
+                    }
+                }
+                catch (e) {
+                    console.error(e);
+                }
             }
         };
         return context;
@@ -1955,6 +1983,10 @@ class PrintessShopifyCart {
         }
         else if (this.initialSaveToken) {
             this.originalSaveToken = this.initialSaveToken;
+        }
+        //Specify ui version
+        if (this.cartItemConfig && this.cartItemConfig.additionalSettings && this.cartItemConfig.additionalSettings["uiVersion"]) {
+            this.settings.uiVersion = this.cartItemConfig.additionalSettings["uiVersion"];
         }
         if (typeof window["initPrintessEditor"] === "function") {
             const editor = window["initPrintessEditor"](this.settings);
