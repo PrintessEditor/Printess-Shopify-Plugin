@@ -1,0 +1,44 @@
+{% comment %}
+Renders an html select to the shopping cart page that allows variant switching for one product option within the shopping basket
+Version 2.6
+
+  Accepts:
+  - item: {Object} cart line item.
+  - graphQlToken: {String}: The App Access Token for the Graphql Api
+  - elementToHideSelector: {String}: The css selector that selects the items that should be hidden in case the variant switcher is displayed
+  - selectElementClasses: {String}: The class names that should be added to the select
+
+  Usage:
+  {% render 'printess-cart-variant-switcher',
+    item: item,
+    graphQlToken: "",
+    elementToHideSelector: "",
+    selectElementClasses: ""
+  %}
+
+
+{% endcomment %}
+
+<select class="printess_cart_variant_switcher" style="display:none" data-basket-item-key="{{ item.key }}" data-product-id="{{ item.product_id }}" data-variant-id="{{ item.variant_id }}" > </select>
+<script>
+    function initCartItem{{ item.key | replace: "-", "_" | replace: ":", "_" }}(retries = 0) {
+        if(typeof PrintessShopifyCartVariantSwitcher === "function") {
+            setTimeout(function() {
+                const switcher = new PrintessShopifyCartVariantSwitcher({
+                    graphQlToken: {{graphQlToken | json}},
+                    basketItem: {{item | json}}
+                });
+
+                switcher.initShoppingCartItem().then(() => {});
+            }, 0);
+        } else {
+            if(retries < 10) {
+                setTimeout(function() {
+                    initCartItem{{ item.key | replace: "-", "_" | replace: ":", "_" }}(retries + 1);
+                }, 100);
+            }
+        }
+    }
+    
+    initCartItem{{ item.key | replace: "-", "_" | replace: ":", "_" }}();
+</script>

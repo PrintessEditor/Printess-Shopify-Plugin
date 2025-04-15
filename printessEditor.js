@@ -865,6 +865,9 @@ class PrintessShopifyGraphQlApi {
                         },
                         dropshipBundlingId: metafield(namespace: "printess", key: "dropshipBundlingId") {
                             value
+                        },
+                        variantSwitchingOption: metafield(namespace: "printess", key: "variantSwitchingOption") {
+                            value
                         }
                     }
                 }`,
@@ -971,6 +974,58 @@ class PrintessShopifyGraphQlApi {
             }
         }
         return null;
+    }
+    getProductVariantsInternal(productId, cursor = null) {
+        const query = {
+            query: `
+                query GetProductsById($productId: ID!{CURSOR1}) {
+                    product(id: $productId) {
+                        variants(first: 50{CURSOR2}) {
+                            edges {
+                                node {
+                                    id
+                                    selectedOptions {
+                                        name
+                                        value
+                                    }
+                                }
+                            }
+                            pageInfo {
+                                hasNextPage
+                                endCursor
+                            }
+                        }
+                    }
+                }`,
+            "variables": {
+                productId: "gid://shopify/Product/" + productId.toString()
+            }
+        };
+        query.query = query.query.replace("{CURSOR1}", cursor ? ", $cursor: String" : "").replace("{CURSOR2}", cursor ? ", after: $cursor" : "");
+        return this.sendGQl(query, "product.variants");
+    }
+    async getProductVariants(productId) {
+        let ret = [];
+        let cursor = "";
+        let response;
+        while ((response = await this.getProductVariantsInternal(productId, cursor)) && response.edges && response.edges.length > 0) {
+            cursor = response.pageInfo.endCursor;
+            response.edges.forEach((node) => {
+                ret.push({
+                    id: PrintessShopifyGraphQlApi.parseShopifyId(node.node.id),
+                    options: node.node.selectedOptions.map((option) => {
+                        return {
+                            optionName: option.name,
+                            optionValue: option.value
+                        };
+                    })
+                });
+            });
+            if (!response.pageInfo.hasNextPage) {
+                break;
+            }
+        }
+        return ret;
     }
 }
 
@@ -3566,3 +3621,148 @@ const initPrintessShopifyEditor = (printessSettings) => {
     }
     return window["printessShopifyEditor"];
 };
+
+class PrintessShopifyCartVariantSwitcher {
+    constructor(settings) {
+        if (!settings) {
+            throw "No settings provided to printess variant switcher";
+        }
+        this._settings = settings;
+    }
+    onSelectionChanged(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const selectCtrl = e.target;
+        const variantValues = {};
+        this._selectedVariant.options.forEach((x) => {
+            variantValues[x.optionName] = x.optionValue;
+        });
+        variantValues[this._product.variantSwitchingOption.value] = selectCtrl.value;
+        const variant = this.getVariantByOptions(variantValues);
+        if (variant) {
+            e.target.disabled = true;
+        }
+        PrintessShopifyCartVariantSwitcher.onReplaceBasketItem(this._settings.basketItem, this._product.id, variant.id).then(() => {
+            window.location.replace('/cart');
+        });
+    }
+    static async onReplaceBasketItem(basketItem, newProductId, newVariantId) {
+        let result = await fetch('/cart/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                items: [{
+                        id: newVariantId || newProductId,
+                        quantity: basketItem.quantity,
+                        properties: basketItem.properties
+                    }]
+            })
+        });
+        if (!result.ok) {
+            console.error("Unable to add item to basket: [" + result.status.toString() + "] " + result.statusText);
+            return;
+        }
+        result = await fetch('/cart/change.js', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                id: basketItem.key,
+                quantity: 0
+            }),
+        });
+        if (!result || !result.ok) {
+            console.error("!Unable to delete item from basket: [" + result.status.toString() + "] " + result.statusText);
+        }
+    }
+    initSelectControl(selectCtrl) {
+        if (!selectCtrl || !this._product || !this._selectedVariant || !this._product.variantSwitchingOption || !this._product.productOptions) {
+            return;
+        }
+        selectCtrl.innerHTML = ""; //Clear all options
+        const option = this._product.productOptions.filter(x => x.name === this._product.variantSwitchingOption.value);
+        if (option && option.length > 0) {
+            const selectedOptionValue = this._selectedVariant.options.filter(x => x.optionName === this._product.variantSwitchingOption.value);
+            option[0].optionValues.forEach(x => {
+                const optionElement = document.createElement("option");
+                optionElement.setAttribute("value", x.name);
+                if (this._settings.selectElementClasses) {
+                    optionElement.setAttribute("class", this._settings.selectElementClasses);
+                }
+                optionElement.innerHTML = x.name;
+                if (selectedOptionValue && selectedOptionValue.length > 0) {
+                    if (selectedOptionValue[0].optionValue === x.name) {
+                        optionElement.setAttribute("selected", "selected");
+                        selectCtrl.value = x.name;
+                    }
+                }
+                selectCtrl.appendChild(optionElement);
+            });
+        }
+        selectCtrl.style.display = "block";
+        const parentItem = selectCtrl.closest(this._settings.parentSelector || ".cart-item");
+        (parentItem || document).querySelectorAll(this._settings.elementToHideSelector || "quantity-input,.quantity.cart-quantity").forEach((x) => { x.style.display = "none"; });
+        if (!selectCtrl.getAttribute("data-printess-initialized")) {
+            selectCtrl.setAttribute("data-printess-initialized", "true");
+            const that = this;
+            selectCtrl.addEventListener("change", function (e) {
+                that.onSelectionChanged(e);
+            });
+        }
+    }
+    getVariantByOptions(options) {
+        let variants = this._product.variants;
+        for (const propertyName in options) {
+            if (options.hasOwnProperty(propertyName)) {
+                variants = variants.filter((x) => {
+                    const option = x.options.filter(y => y.optionName === propertyName && y.optionValue === options[propertyName]);
+                    return option && option.length > 0;
+                });
+            }
+        }
+        if (variants && variants.length > 0) {
+            return variants[0];
+        }
+        return null;
+    }
+    async initShoppingCartItem() {
+        this._product = null;
+        this._selectedVariant = null;
+        const selectElement = document.querySelector(`select[data-basket-item-key="${this._settings.basketItem.key}"]`);
+        if (!selectElement) {
+            console.error("Printess variant switcher not found for basket item " + this._settings.basketItem.key);
+            return;
+        }
+        let product;
+        if (!PrintessShopifyCartVariantSwitcher._productCache[this._settings.basketItem.product_id]) {
+            const graphQlApi = new PrintessShopifyGraphQlApi(this._settings.graphQlToken);
+            product = await graphQlApi.getProductById(this._settings.basketItem.product_id, true);
+            if (!product) {
+                console.error("Printess variant switcher [" + this._settings.basketItem.key + "] can not get product information for product with id " + this._settings.basketItem.product_id);
+                return;
+            }
+            product.variants = await graphQlApi.getProductVariants(product.id);
+            PrintessShopifyCartVariantSwitcher._productCache[product.id] = product;
+        }
+        else {
+            product = PrintessShopifyCartVariantSwitcher._productCache[this._settings.basketItem.product_id];
+        }
+        if (!product || !product.variantSwitchingOption) {
+            return;
+        }
+        this._product = product;
+        if (product.variants) {
+            const variants = product.variants.filter((x) => {
+                return x.id === this._settings.basketItem.variant_id;
+            });
+            if (variants && variants.length > 0) {
+                this._selectedVariant = variants[0];
+            }
+        }
+        this.initSelectControl(selectElement);
+    }
+}
+PrintessShopifyCartVariantSwitcher._productCache = {};
