@@ -1,4 +1,5 @@
-/*Printess Shopify Integration Version: 2.6*/class PrintessEditor {
+/*Printess Shopify Integration Version: 2.6*/
+;class PrintessEditor {
     constructor(settings) {
         this.calculateCurrentPrices = async (priceInfo, context) => {
             const r = await this.getPriceCategories(context);
@@ -265,11 +266,49 @@
                     if (callbacks && typeof callbacks.onSaveAsync === "function") {
                         callbacks.onSaveAsync(evt.data.token);
                     }
+                    break;
                 }
-                case 'load': {
+                case 'loaded': {
+                    if (this.Settings.autoImportImageUrlsInFormFields === true) {
+                        try {
+                            this.downloadImages(this.getImagesInFormFields(that.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings()))).then((images) => {
+                                if (!this.tempUploadImages) {
+                                    this.tempUploadImages = images;
+                                }
+                                else {
+                                    this.tempUploadImages = [
+                                        ...this.tempUploadImages,
+                                        ...images
+                                    ];
+                                }
+                                if (images.length > 0) {
+                                    this.uploadImageToClassicEditor(iFrame, images[0].data, images[0].name);
+                                }
+                            });
+                        }
+                        catch (e) {
+                            console.error(e);
+                        }
+                    }
                     if (callbacks && typeof callbacks.onLoadAsync === "function") {
                         callbacks.onLoadAsync(context.templateNameOrSaveToken);
                     }
+                    break;
+                }
+                case "uploadImage": {
+                    if (this.tempUploadImages && evt.data.result) {
+                        const images = this.tempUploadImages;
+                        if (images && images.length > 0) {
+                            const currentImage = images[0];
+                            const imageName = evt.data.result.name;
+                            images.shift();
+                            iFrame.contentWindow?.postMessage({ cmd: "setFormFieldValue", parameters: [currentImage.name, imageName] }, "*");
+                            if (images.length > 0) {
+                                this.uploadImageToClassicEditor(iFrame, images[0].data, images[0].name);
+                            }
+                        }
+                    }
+                    break;
                 }
                 default:
                     break;
@@ -320,6 +359,26 @@
             }
         });
     }
+    getFileNameFromUrl(fileName) {
+        return (fileName || "").split('#')[0].split('?')[0].split('/').pop();
+    }
+    getImagesInFormFields(formFields) {
+        const ret = [];
+        const supportedExtensions = ["png", "jpg", "gif", "webp", "svg", "heic"];
+        formFields.forEach((ff) => {
+            if (ff.value) {
+                const lowerValue = ff.value.toLowerCase();
+                if (lowerValue.startsWith("http://") || lowerValue.startsWith("https://")) {
+                    const fileName = this.getFileNameFromUrl(lowerValue);
+                    const fileParts = fileName.split(".");
+                    if (fileParts.length > 0 && supportedExtensions.includes(fileParts[1])) {
+                        ret.push(ff);
+                    }
+                }
+            }
+        });
+        return ret;
+    }
     async getPriceCategories(context, formFieldValues = null) {
         let price = 0;
         if (!formFieldValues) {
@@ -351,6 +410,29 @@
         try {
             let priceInfo = null;
             try {
+                if (typeof priceChangedInfo.pageCount !== "undefined") {
+                    if (context.currentPageCount !== priceChangedInfo.pageCount) {
+                        context.currentPageCount = priceChangedInfo.pageCount;
+                        if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined") {
+                            if (typeof context.onFormFieldChanged === "function") {
+                                try {
+                                    context.onFormFieldChanged(context.additionalAttachParams["pageCountFormField"], context.currentPageCount.toString(), "", "");
+                                }
+                                catch (ex) {
+                                    console.error(ex);
+                                }
+                            }
+                            if (typeof context.onFormFieldChangedAsync === "function") {
+                                try {
+                                    await context.onFormFieldChangedAsync(context.additionalAttachParams["pageCountFormField"], context.currentPageCount.toString(), "", "");
+                                }
+                                catch (ex) {
+                                    console.error(ex);
+                                }
+                            }
+                        }
+                    }
+                }
                 if (priceChangedInfo.snippetPriceCategories && priceChangedInfo.snippetPriceCategories.length > 0) {
                     context.stickers = priceChangedInfo.snippetPriceCategories.filter((x) => context.snippetPrices && context.snippetPrices.length >= x.priceCategory).map((x) => {
                         return {
@@ -397,15 +479,100 @@
         //Hide the web page scrolling
         document.body.classList.remove('hideAll');
     }
+    async downloadImages(images) {
+        const ret = [];
+        for (let i = 0; i < images.length; ++i) {
+            const response = await fetch(images[i].value);
+            if (response.ok) {
+                const blob = await response.blob();
+                ret.push({
+                    name: images[0].name,
+                    data: new File([blob], this.getFileNameFromUrl(images[i].value), { type: blob.type })
+                });
+            }
+            else {
+                console.error("Unable to download image " + images[i].value + "; [" + response.status.toString() + "] " + response.statusText + ": " + await response.text());
+            }
+        }
+        return ret;
+    }
+    async uploadImagesToBcUiEditor(files, editor) {
+        if (files) {
+            for (let i = 0; i < files.length; ++i) {
+                const result = await editor.api.uploadImage(files[i].data, null, false);
+                if (result) {
+                    await editor.api.setFormFieldValue(files[i].name, result.name);
+                }
+            }
+        }
+    }
+    uploadImageToClassicEditor(iframe, file, formFieldName) {
+        if (file) {
+            iframe.contentWindow?.postMessage({ cmd: "uploadImage", parameters: [file, null, false, "ff_" + formFieldName] }, "*");
+        }
+    }
+    static generateUUID() {
+        var d = new Date().getTime(); //Timestamp
+        var d2 = ((typeof performance !== 'undefined') && performance.now && (performance.now() * 1000)) || 0; //Time in microseconds since page-load or 0 if unsupported
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            var r = Math.random() * 16; //random number between 0 and 16
+            if (d > 0) { //Use timestamp until depleted
+                r = (d + r) % 16 | 0;
+                d = Math.floor(d / 16);
+            }
+            else { //Use microseconds since page-load if supported
+                r = (d2 + r) % 16 | 0;
+                d2 = Math.floor(d2 / 16);
+            }
+            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+    }
+    getOrGenerateBasketId(context) {
+        let ret = typeof context.getBasketId === "function" ? context.getBasketId() : "";
+        if (!ret || ret.toLowerCase() == 'some-unique-basket-or-session-id' || ret.toLowerCase() == 'some-unique-shop-user-id') {
+            if (!ret) {
+                try {
+                    ret = localStorage.getItem("printessUniqueBasketId");
+                }
+                catch (e) {
+                    console.warn("Unable to read user id from local storage.");
+                }
+            }
+            if (!ret) {
+                ret = window["printessUniqueBasketId"];
+            }
+            if (!ret) {
+                ret = PrintessEditor.generateUUID() + "_" + new Date().valueOf().toString();
+                try {
+                    localStorage.setItem("printessUniqueBasketId", ret);
+                }
+                catch (e) {
+                    window["printessUniqueBasketId"] = ret;
+                    console.warn("Unable to write user id to local storage.");
+                }
+            }
+        }
+        return ret || 'Some-Unique-Basket-Or-Session-Id';
+    }
     async showBcUiVersion(context, callbacks) {
         const that = this;
         const priceInfo = context.getPriceInfo();
         let isSaveToken = context && context.templateNameOrSaveToken && context.templateNameOrSaveToken.indexOf("st:") === 0;
+        let pageCount = null;
         let formFields = null;
         let mergeTemplates = null;
         if (!isSaveToken) {
             formFields = that.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings());
             mergeTemplates = context.getMergeTemplates();
+            if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined") {
+                const pageFormField = formFields.filter(x => x.name === context.additionalAttachParams["pageCountFormField"]);
+                if (pageFormField && pageFormField.length > 0) {
+                    let intValue = PrintessEditor.extractNumber(pageFormField[0].value);
+                    if (!isNaN(intValue) && isFinite(intValue)) {
+                        pageCount = intValue;
+                    }
+                }
+            }
         }
         const startupParams = {};
         const loaderUrl = that.getLoaderUrl(this.Settings.editorUrl, this.Settings.editorVersion, startupParams);
@@ -423,6 +590,9 @@
                 }
             };
             await printessComponent.editor.api.loadTemplateAndFormFields(context.templateNameOrSaveToken, mergeTemplates, formFields, null);
+            if (!isSaveToken && pageCount !== null && pageCount > 0) {
+                await printessComponent.editor.api.setBookinsidePages(pageCount);
+            }
             printessComponent.editor.ui.show();
         }
         else {
@@ -434,8 +604,8 @@
                 templateName: context.templateNameOrSaveToken,
                 //templateVersion: "publish",//"draft"
                 translationKey: "",
-                basketId: typeof context.getBasketId === "function" ? context.getBasketId() || 'Some-Unique-Basket-Or-Session-Id' : 'Some-Unique-Basket-Or-Session-Id',
-                shopUserId: typeof context.getUserId === "function" ? context.getUserId() || 'Some-Unique-Basket-Or-Session-Id' : 'Some-Unique-Shop-User-Id',
+                basketId: this.getOrGenerateBasketId(context),
+                shopUserId: 'Some-Unique-Shop-User-Id',
                 // mobileMargin: {left: 20, right: 40, top: 30, bottom: 40},
                 // allowZoomAndPan: false,
                 snippetPriceCategoryLabels: priceInfo && priceInfo.snippetPrices ? priceInfo.snippetPrices : null,
@@ -467,15 +637,36 @@
                     }
                 },
                 loadTemplateCallback: (param) => {
+                    if (this.Settings.autoImportImageUrlsInFormFields === true) {
+                        try {
+                            this.downloadImages(this.getImagesInFormFields(that.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings()))).then((images) => {
+                                this.uploadImagesToBcUiEditor(images, printessComponent.editor).then((x) => {
+                                });
+                            });
+                        }
+                        catch (e) {
+                            console.error(e);
+                        }
+                    }
                     callbacks.onLoadAsync(attachParams.templateName);
                 }
             };
+            if (!isSaveToken && pageCount !== null && pageCount >= 1) {
+                attachParams["bookInsidePages"] = pageCount;
+            }
             const printess = await printessLoader.load(attachParams);
             printessComponent = that.getPrintessComponent();
             if (printessComponent) {
                 printessComponent.editor = printess;
             }
         }
+    }
+    static extractNumber(inputStr) {
+        let c = "0123456789";
+        function check(x) {
+            return c.includes(x) ? true : false;
+        }
+        return parseInt([...inputStr].reduce((x, y) => (check(y) ? x + y : x), ""));
     }
     async show(context) {
         const that = this;
@@ -553,11 +744,21 @@
         }
         else {
             const priceInfo = context.getPriceInfo();
+            let pageCount = null;
             let formFields = null;
             let mergeTemplates = null;
             if (!isSaveToken) {
                 formFields = this.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings());
                 mergeTemplates = context.getMergeTemplates();
+                if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined") {
+                    const pageFormField = formFields.filter(x => x.name === context.additionalAttachParams["pageCountFormField"]);
+                    if (pageFormField && pageFormField.length > 0) {
+                        let intValue = PrintessEditor.extractNumber(pageFormField[0].value);
+                        if (!isNaN(intValue) && isFinite(intValue)) {
+                            pageCount = intValue;
+                        }
+                    }
+                }
             }
             const iFrame = await this.initializeIFrame(callbacks, context, this.Settings);
             context.renderFirstPageImageAsync = (maxThumbnailWidth, maxThumbnailHeight) => {
@@ -577,7 +778,7 @@
                         templateName: context.templateNameOrSaveToken,
                         showBuyerSide: true,
                         templateUserId: '',
-                        basketId: typeof context.getBasketId === "function" ? context.getBasketId() || 'Some-Unique-Basket-Or-Session-Id' : 'Some-Unique-Basket-Or-Session-Id',
+                        basketId: this.getOrGenerateBasketId(context),
                         shopUserId: typeof context.getUserId === "function" ? context.getUserId() || 'Some-Unique-Basket-Or-Session-Id' : 'Some-Unique-Shop-User-Id',
                         formFields: formFields,
                         snippetPriceCategoryLabels: priceInfo && priceInfo.snippetPrices ? priceInfo.snippetPrices : null,
@@ -596,12 +797,15 @@
                             }
                         }
                     }
-                    if (typeof context.additionalAttachParams !== "undefined" || context.additionalAttachParams !== null) {
+                    if (context.additionalAttachParams) {
                         for (const prop in context.additionalAttachParams) {
                             if (context.additionalAttachParams.hasOwnProperty(prop)) {
                                 attachParams[prop] = context.additionalAttachParams[prop];
                             }
                         }
+                    }
+                    if (!isSaveToken && pageCount !== null && pageCount >= 1) {
+                        attachParams["bookInsidePages"] = pageCount;
                     }
                     iFrame.contentWindow.postMessage({
                         cmd: 'attach',
@@ -645,6 +849,14 @@
                     parameters: [loadParams.templateNameOrToken, loadParams.mergeTemplates, loadParams.formFields, loadParams.snippetPriceCategoryLabels, loadParams.formFieldProperties, loadParams.clearExchangeCaches]
                 }, '*');
                 setTimeout(function () { iFrame.contentWindow.focus(); }, 0);
+                if (!isSaveToken && pageCount !== null && pageCount > 0) {
+                    setTimeout(function () {
+                        iFrame.contentWindow.postMessage({
+                            cmd: "setPageInsidePages",
+                            parameters: [pageCount]
+                        }, '*');
+                    }, 0);
+                }
             }
         }
         //Hide the web page scrolling
@@ -738,9 +950,6 @@
     }
     return new PrintessEditor(editorSettings);
 }
-
-
-
 
 class PrintessShopifyGraphQlApi {
     constructor(graphQlToken) {
@@ -1008,28 +1217,39 @@ class PrintessShopifyGraphQlApi {
         let ret = [];
         let cursor = "";
         let response;
-        while ((response = await this.getProductVariantsInternal(productId, cursor)) && response.edges && response.edges.length > 0) {
-            cursor = response.pageInfo.endCursor;
-            response.edges.forEach((node) => {
-                ret.push({
-                    id: PrintessShopifyGraphQlApi.parseShopifyId(node.node.id),
-                    options: node.node.selectedOptions.map((option) => {
-                        return {
-                            optionName: option.name,
-                            optionValue: option.value
-                        };
-                    })
+        let currentReuqestCounter = 0;
+        while (currentReuqestCounter < 500) {
+            currentReuqestCounter += 1;
+            response = await this.getProductVariantsInternal(productId, cursor);
+            if (response.edges && response.edges.length > 0) {
+                response.edges.forEach((node) => {
+                    ret.push({
+                        id: PrintessShopifyGraphQlApi.parseShopifyId(node.node.id),
+                        options: node.node.selectedOptions.map((option) => {
+                            return {
+                                optionName: option.name,
+                                optionValue: option.value
+                            };
+                        })
+                    });
                 });
-            });
-            if (!response.pageInfo.hasNextPage) {
+                if (response.pageInfo.endCursor != cursor) {
+                    cursor = response.pageInfo.endCursor;
+                }
+                else {
+                    break;
+                }
+                if (!response.pageInfo.hasNextPage) {
+                    break;
+                }
+            }
+            else {
                 break;
             }
         }
         return ret;
     }
 }
-
-
 
 class PrintessShopifyCart {
     constructor(printessSettings) {
@@ -1481,6 +1701,17 @@ class PrintessShopifyCart {
             onFormFieldChanged: function (formField, value, formFieldLabel, valueLabel) {
                 let optionFound = false;
                 let formFieldChangedCallback = null;
+                if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined" && context.additionalAttachParams["pageCountFormField"] === formField) {
+                    if (that.product.productOptions) {
+                        const selectedOption = that.product.productOptions.filter(x => x.name === formField);
+                        if (selectedOption && selectedOption.length > 0) {
+                            const optionValue = selectedOption[0].optionValues.filter(x => PrintessEditor.extractNumber(x.name).toString() === value);
+                            if (optionValue && optionValue.length > 0) {
+                                value = optionValue[0].name;
+                            }
+                        }
+                    }
+                }
                 if (PrintessEditor && PrintessEditor.getGlobalShopSettings) {
                     const settings = PrintessEditor.getGlobalShopSettings();
                     if (typeof settings.onFormFieldChanged === "function") {
@@ -2117,9 +2348,6 @@ class PrintessShopifyCart {
     }
 }
 
-
-
-
 const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketItem = false) => {
     const showMethodName1 = "openPrintessEditor" + itemId;
     const showMethodName2 = "showPrintessEditor" + itemId;
@@ -2301,8 +2529,31 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 }
                 return false;
             },
-            getCurrentProductOptionValues: (product) => {
+            getProductOptionValuesByVariantId: (variantId, product) => {
                 const ret = {};
+                const variantOptionNames = {};
+                if (!product.variants) {
+                    return null;
+                }
+                if (typeof variantId === "string") {
+                    variantId = parseInt(variantId);
+                }
+                const selectedVariant = product.variants.filter(x => x.id === variantId);
+                if (!selectedVariant || selectedVariant.length < 1) {
+                    return null;
+                }
+                product.optionDetails.forEach((x) => {
+                    variantOptionNames[x.position] = x.name;
+                });
+                if (selectedVariant[0].options) {
+                    for (let i = 0; i < selectedVariant[0].options.length; ++i) {
+                        ret[variantOptionNames[i + 1]] = selectedVariant[0].options[i];
+                    }
+                }
+                return ret;
+            },
+            getCurrentProductOptionValues: (product) => {
+                let ret = {};
                 //Check if there are predefined form field values and include these
                 if (PrintessEditor && PrintessEditor.getGlobalFormFields) {
                     const globalFormFields = PrintessEditor.getGlobalFormFields();
@@ -2331,6 +2582,15 @@ const initPrintessShopifyEditor = (printessSettings) => {
                         catch (e) {
                             console.error(e);
                         }
+                    }
+                }
+                if (printessSettings.useVariantIdField === true) {
+                    const variantIdCtrl = document.querySelector('input[name="variant_id"],select[name="variant_id"]');
+                    if (variantIdCtrl && variantIdCtrl.value) {
+                        ret = {
+                            ...ret,
+                            ...editor.getProductOptionValuesByVariantId(parseInt(variantIdCtrl.value), product)
+                        };
                     }
                 }
                 return ret;
@@ -2577,6 +2837,23 @@ const initPrintessShopifyEditor = (printessSettings) => {
                             el.dispatchEvent(new Event('change'));
                         }
                     });
+                }
+                if (printessSettings.useVariantIdField === true) {
+                    const variantIdCtrl = document.querySelector('input[name="variant_id"],select[name="variant_id"]');
+                    if (variantIdCtrl && variantIdCtrl.value) {
+                        const values = editor.getProductOptionValuesByVariantId(parseInt(variantIdCtrl.value), product);
+                        /*
+                        product: IProduct, formField: string, value: string, formFieldLabel: string, valueLabel: string
+                        */
+                        if (typeof values[formField] !== "undefined" || typeof values[formFieldLabel] === "undefined") {
+                            values[formField] = value;
+                        }
+                        else {
+                            values[formFieldLabel] = valueLabel;
+                        }
+                        const variant = editor.getVariantByProductOptions(values, product, true);
+                        variantIdCtrl.value = variant.id.toString();
+                    }
                 }
             },
             setProductProperty: (settings, formField, value, formFieldLabel, valueLabel, useFallback = false) => {
@@ -2856,6 +3133,17 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     },
                     onFormFieldChanged: (formField, value, formFieldLabel, valueLabel) => {
                         let formFieldChangedCallback = null;
+                        if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined" && context.additionalAttachParams["pageCountFormField"] === formField) {
+                            if (settings.product.optionDetails) {
+                                const selectedOption = settings.product.optionDetails.filter(x => x.name === formField);
+                                if (selectedOption && selectedOption.length > 0) {
+                                    const optionValue = selectedOption[0].values.filter(x => PrintessEditor.extractNumber(x.name).toString() === value);
+                                    if (optionValue && optionValue.length > 0) {
+                                        value = optionValue[0].name;
+                                    }
+                                }
+                            }
+                        }
                         if (PrintessEditor && PrintessEditor.getGlobalShopSettings) {
                             const settings = PrintessEditor.getGlobalShopSettings();
                             if (typeof settings.onFormFieldChanged === "function") {
@@ -3624,29 +3912,100 @@ const initPrintessShopifyEditor = (printessSettings) => {
 
 class PrintessShopifyCartVariantSwitcher {
     constructor(settings) {
-        if (!settings) {
-            throw "No settings provided to printess variant switcher";
-        }
         this._settings = settings;
-    }
-    onSelectionChanged(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        const selectCtrl = e.target;
-        const variantValues = {};
-        this._selectedVariant.options.forEach((x) => {
-            variantValues[x.optionName] = x.optionValue;
-        });
-        variantValues[this._product.variantSwitchingOption.value] = selectCtrl.value;
-        const variant = this.getVariantByOptions(variantValues);
-        if (variant) {
-            e.target.disabled = true;
+        document.querySelectorAll(".printess_cart_variant_switcher").forEach(x => this.addBasketItem(x));
+        if (settings.itemListSelector) {
+            const item = document.querySelector(settings.itemListSelector);
+            const that = this;
+            if (item) {
+                const observer = new MutationObserver((mutationList, observer) => {
+                    for (const mutation of mutationList) {
+                        if (mutation.type === "childList") {
+                            item.querySelectorAll(".printess_cart_variant_switcher").forEach(x => this.addBasketItem(x));
+                        }
+                    }
+                });
+                observer.observe(item, {
+                    childList: true,
+                    subtree: true
+                });
+            }
         }
-        PrintessShopifyCartVariantSwitcher.onReplaceBasketItem(this._settings.basketItem, this._product.id, variant.id).then(() => {
-            window.location.replace('/cart');
+    }
+    getVariantByOptions(product, options) {
+        let variants = product.variants;
+        for (const propertyName in options) {
+            if (options.hasOwnProperty(propertyName)) {
+                variants = variants.filter((x) => {
+                    const option = x.options.filter(y => y.optionName === propertyName && y.optionValue === options[propertyName]);
+                    return option && option.length > 0;
+                });
+            }
+        }
+        if (variants && variants.length > 0) {
+            return variants[0];
+        }
+        return null;
+    }
+    async getProduct(productId) {
+        if (PrintessShopifyCartVariantSwitcher._productCache[productId]) {
+            return PrintessShopifyCartVariantSwitcher._productCache[productId];
+        }
+        const graphQlApi = new PrintessShopifyGraphQlApi(this._settings.graphQlToken);
+        const product = await graphQlApi.getProductById(productId, true);
+        if (!product) {
+            console.error("Can not get product information for product with id " + productId);
+            return null;
+        }
+        product.variants = await graphQlApi.getProductVariants(product.id);
+        PrintessShopifyCartVariantSwitcher._productCache[productId] = product;
+        return PrintessShopifyCartVariantSwitcher._productCache[productId];
+    }
+    selectionChangedEvent(evt) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        const selectCtrl = evt.target;
+        const variantValues = {};
+        this.getProduct(parseInt(selectCtrl.getAttribute("data-product-id"))).then((product) => {
+            const variantId = parseInt(selectCtrl.getAttribute("data-variant-id"));
+            const selectedVariant = product.variants.filter(x => x.id === variantId)[0];
+            selectedVariant.options.forEach((x) => {
+                variantValues[x.optionName] = x.optionValue;
+            });
+            variantValues[product.variantSwitchingOption.value] = selectCtrl.value;
+            const variant = this.getVariantByOptions(product, variantValues);
+            if (variant) {
+                selectCtrl.disabled = true;
+            }
+            PrintessShopifyCartVariantSwitcher.onReplaceBasketItem(selectCtrl, product.id, variant.id).then(() => {
+                window.location.replace('/cart');
+            });
         });
     }
-    static async onReplaceBasketItem(basketItem, newProductId, newVariantId) {
+    static decodeHtml(value) {
+        var txt = document.createElement("textarea");
+        txt.innerHTML = value;
+        return txt.value;
+    }
+    static async onReplaceBasketItem(selectControl, newProductId, newVariantId) {
+        let properties = {};
+        const serialized = JSON.parse(selectControl.getAttribute("data-basket-properties"));
+        if (Array.isArray(serialized)) {
+            serialized.forEach((x) => {
+                properties[x[0]] = x[1];
+            });
+        }
+        else {
+            properties = serialized;
+        }
+        //There are some html encoding issues that we have to solve by removing the html encoding
+        for (const prop in properties) {
+            if (properties.hasOwnProperty(prop)) {
+                if (typeof properties[prop] === "string") {
+                    properties[prop] = PrintessShopifyCartVariantSwitcher.decodeHtml(properties[prop]);
+                }
+            }
+        }
         let result = await fetch('/cart/add', {
             method: 'POST',
             headers: {
@@ -3655,8 +4014,8 @@ class PrintessShopifyCartVariantSwitcher {
             body: JSON.stringify({
                 items: [{
                         id: newVariantId || newProductId,
-                        quantity: basketItem.quantity,
-                        properties: basketItem.properties
+                        quantity: 1,
+                        properties: properties
                     }]
             })
         });
@@ -3670,7 +4029,7 @@ class PrintessShopifyCartVariantSwitcher {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                id: basketItem.key,
+                id: selectControl.getAttribute("data-basket-item-key"),
                 quantity: 0
             }),
         });
@@ -3678,14 +4037,19 @@ class PrintessShopifyCartVariantSwitcher {
             console.error("!Unable to delete item from basket: [" + result.status.toString() + "] " + result.statusText);
         }
     }
-    initSelectControl(selectCtrl) {
-        if (!selectCtrl || !this._product || !this._selectedVariant || !this._product.variantSwitchingOption || !this._product.productOptions) {
+    initSelectControl(selectCtrl, product) {
+        const variantId = parseInt(selectCtrl.getAttribute("data-variant-id"));
+        if (!selectCtrl || !product || !product.variants || !product.variantSwitchingOption || !product.productOptions) {
+            return null;
+        }
+        const selectedVariant = product.variants.filter(x => x.id === variantId);
+        if (!selectedVariant || selectedVariant.length < 1) {
             return;
         }
         selectCtrl.innerHTML = ""; //Clear all options
-        const option = this._product.productOptions.filter(x => x.name === this._product.variantSwitchingOption.value);
+        const option = product.productOptions.filter(x => x.name === product.variantSwitchingOption.value);
         if (option && option.length > 0) {
-            const selectedOptionValue = this._selectedVariant.options.filter(x => x.optionName === this._product.variantSwitchingOption.value);
+            const selectedOptionValue = selectedVariant[0].options.filter(x => x.optionName === product.variantSwitchingOption.value);
             option[0].optionValues.forEach(x => {
                 const optionElement = document.createElement("option");
                 optionElement.setAttribute("value", x.name);
@@ -3709,60 +4073,17 @@ class PrintessShopifyCartVariantSwitcher {
             selectCtrl.setAttribute("data-printess-initialized", "true");
             const that = this;
             selectCtrl.addEventListener("change", function (e) {
-                that.onSelectionChanged(e);
+                that.selectionChangedEvent(e);
             });
         }
     }
-    getVariantByOptions(options) {
-        let variants = this._product.variants;
-        for (const propertyName in options) {
-            if (options.hasOwnProperty(propertyName)) {
-                variants = variants.filter((x) => {
-                    const option = x.options.filter(y => y.optionName === propertyName && y.optionValue === options[propertyName]);
-                    return option && option.length > 0;
-                });
-            }
-        }
-        if (variants && variants.length > 0) {
-            return variants[0];
-        }
-        return null;
-    }
-    async initShoppingCartItem() {
-        this._product = null;
-        this._selectedVariant = null;
-        const selectElement = document.querySelector(`select[data-basket-item-key="${this._settings.basketItem.key}"]`);
-        if (!selectElement) {
-            console.error("Printess variant switcher not found for basket item " + this._settings.basketItem.key);
-            return;
-        }
-        let product;
-        if (!PrintessShopifyCartVariantSwitcher._productCache[this._settings.basketItem.product_id]) {
-            const graphQlApi = new PrintessShopifyGraphQlApi(this._settings.graphQlToken);
-            product = await graphQlApi.getProductById(this._settings.basketItem.product_id, true);
-            if (!product) {
-                console.error("Printess variant switcher [" + this._settings.basketItem.key + "] can not get product information for product with id " + this._settings.basketItem.product_id);
+    async addBasketItem(selectControl) {
+        if (selectControl) {
+            if (selectControl.getAttribute("data-printess-initialized")) {
                 return;
             }
-            product.variants = await graphQlApi.getProductVariants(product.id);
-            PrintessShopifyCartVariantSwitcher._productCache[product.id] = product;
+            this.initSelectControl(selectControl, await this.getProduct(parseInt(selectControl.getAttribute("data-product-id"))));
         }
-        else {
-            product = PrintessShopifyCartVariantSwitcher._productCache[this._settings.basketItem.product_id];
-        }
-        if (!product || !product.variantSwitchingOption) {
-            return;
-        }
-        this._product = product;
-        if (product.variants) {
-            const variants = product.variants.filter((x) => {
-                return x.id === this._settings.basketItem.variant_id;
-            });
-            if (variants && variants.length > 0) {
-                this._selectedVariant = variants[0];
-            }
-        }
-        this.initSelectControl(selectElement);
     }
 }
 PrintessShopifyCartVariantSwitcher._productCache = {};
