@@ -1,0 +1,31 @@
+<!-- Start Printess theme.liquid header block -->
+    {% comment %} Version 2.1 {% endcomment %}
+    <script src="{{ 'printessEditor.js' | asset_url }}" defer="defer"></script>
+    {{ 'printesseditor.css' | asset_url | stylesheet_tag }}
+
+    <script>
+        function ensurePrintessIntegration(executionIndex = 0) {
+            if(typeof PrintessEditor !== "null") {
+                const productPageScripts = document.querySelectorAll('script[id^="printess__init_script_"]');
+
+                if(productPageScripts) {
+                    productPageScripts.forEach((scriptTag) => {
+                        const scriptId = scriptTag.getAttribute("id").replace("printess__init_script_", "");
+
+                        PrintessEditor.ensureScriptExecution(scriptTag.getAttribute("id"), "init_printess_product_" + scriptId);
+                    });
+                }
+            } else {
+                if(executionIndex < 100) {
+                    setTimeout(function() {
+                        ensurePrintessIntegration(executionIndex + 1);
+                    }, 200);
+                }
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", function() {
+            ensurePrintessIntegration();
+        });
+    </script>
+<!-- End Printess theme.liquid header block -->

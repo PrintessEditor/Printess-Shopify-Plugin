@@ -1,0 +1,18 @@
+slider-component ul li .product__media img.printess-loader-visible {
+  opacity: 0.5;
+}
+
+slider-component ul li .loading-overlay__spinner.printess-loader-visible {
+  display: block !important;
+  z-index: 99;
+}
+
+.printess-hidden {
+    display: none !important;
+}
+
+.printess-progress-indicator {
+  width: 100%;
+  min-height: 200px;
+  background-color: #e3e3e3;
+}

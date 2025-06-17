@@ -23,6 +23,7 @@
     - productFormSelector: {String} The css selector for the product form
     - productButtonSelector: {String} The css selector for the add to basket button
     - legacyAddToBasket: {Boolean} Do not use the add to basket button to submit the item to the basket, but add it via ajax call
+    - printQuantityOption: {String} The product option that indicates the print quantity (in case the shop auantity should not be used)
     Usage:
     {% render 'printess-add-to-basket',
       product: product,
@@ -44,7 +45,8 @@
       ignoreDataOptionIndex: false,
       productFormSelector: "",
       productButtonSelector: "",
-      legacyAddToBasket: true
+      legacyAddToBasket: true,
+      printQuantityOption: ""
     %}
 {% endcomment %}
 
@@ -204,7 +206,8 @@
       additionalLineItemProperties: addedAdditionalProperties ? additionalProperties : null,
       priceDisplayElementSelector: {{ priceDisplayElementSelector | json }},
       tableQuantityField: {{ tableQuantityFormField | json }} || "",
-      legacyAddToBasket: {% if legacyAddToBasket == true %} true {% else %} false {% endif %}
+      legacyAddToBasket: {% if legacyAddToBasket == true %} true {% else %} false {% endif %},
+      printQuantityOption: {% if printQuantityOption != blank %}{{ printQuantityOption | json }}{% else %}null{% endif %}
       /* ,onAddToBasket: function(saveToken, thumbnailUrl) {
 
        },

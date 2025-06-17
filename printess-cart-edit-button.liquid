@@ -21,6 +21,9 @@
   - duplicateAndPersonalizeText: {String} Will show a duplicate & personalize link that enables the customer to open the current basket item, modify it and add it as a second
   - graphQlToken: {String}: The App Access Token for the Graphql Api
   - forceCartItemCleanup: {Boolean}: Forces the cleanup of cart items that have noot been deleted correctly due to other scripts
+  - quantitySelector: {String} A selector that selets the html child node that represents the quantitry selector so that the quantity selector can be hidden for circulation vdp products
+  - cartItemParentSelector: {String} A selector that selets the html parent node that represents the cart item html node so that the quantity selector can be searched and hidden for circulation vdp products
+  - circulationTableRecordCountText: {String} The text that should be placed instead of the quantity selector. The text {NUMBER} will be replaced by the printed record count
   Usage:
   {% render 'printess-cart-edit-button',
     item: item,
@@ -40,7 +43,10 @@
     additionalAttachParams: {},
     duplicateAndPersonalizeText: "",
     graphQlToken: "",
-    forceCartItemCleanup: false
+    forceCartItemCleanup: false,
+    quantitySelector: "",
+    cartItemParentSelector: "",
+    circulationTableRecordCountText: "{NUMBER} Records"
   %}
 {% endcomment %}
 
@@ -118,6 +124,23 @@
     
     editor.show(settings);
   }
+
+  setTimeout(function() {
+    const properties = {};
+    const basketItemProperties = {{item.properties | json}};
+
+    if(basketItemProperties) {
+      basketItemProperties.forEach((prop) => {
+        if(prop.length > 1) {
+          properties[prop[0]] = prop[1];
+        } else {
+          properties[prop[0]] = "";
+        }
+      });
+    }
+
+    PrintessShopifyCart.initCirculationCartItem({{ cartItemParentSelector | json }}, {{ quantitySelector | json }}, {{ item.key | replace: "-", "_" | replace: ":", "_"  | json }}, properties, {{ circulationTableRecordCountText | json }});
+  }, 10);
 </script>
 
 {% if template == 'cart' and forceCartItemCleanup == true %}

@@ -1,0 +1,48 @@
+{% comment %}
+  Renders the printess slim ui integration
+  Version 1.0
+  
+  Accepts:
+    - frontendAppToken: { String } The Shopify app token for frontend api access
+    - sectionSelector: { String } (Optional) The css selector for the product section
+    - variantSelectorSelector: { String } (Optional) The css selector for the variant selector
+    - productFormSelector: { String } (Optional) The css selector for the product form
+    - productIdSelector: { String } (Optional) The css selector for the product id input
+    - mediaSelector: { String } (Optional) The css selector for the media box
+    - ignoreDataOptionIndex: { Boolean } Ignore data-option-index html attributes
+    - useVariantIdField: { Boolean } Do not rely on the variant selector and try to use the variantId input
+    - shopToken: { String } The Printess Shop Token
+    - productInfoSelector: { String } Css Selector for the product info box
+    - formInsertPosition: { Number } The Insert position inside the product info section to insert the printess form in in case no variant selector was found
+    - imageSelector: { String } Css selector for the image that should be replaced by the slim ui
+    - loaderSelector: { String } Css selector for the progress indicator that should be used by the slim ui
+
+  Usage:
+  {% render 'printess-slim-ui',
+    frontendAppToken: ""
+  %}
+{% endcomment %}
+
+<script>
+  window.addEventListener('DOMContentLoaded', () => {
+    const printessSettings = {
+        sectionSelector: {{ sectionSelector | json }} || "",
+        variantSelectorSelector:  {{ variantSelectorSelector | json }} || "",
+        productFormSelector:  {{ productFormSelector | json }} || "",
+        productIdSelector:  {{ productIdSelector | json }} || "",
+        mediaSelector:  {{ mediaSelector | json }} || "",
+        frontendAppToken:  {{ frontendAppToken | json }} || "",
+        ignoreDataOptionIndex:  {{ ignoreDataOptionIndex | json }} || "",
+        useVariantIdField:  {{ useVariantIdField | json }} || "",
+        shopToken: {{ shopToken | json}} || "",
+        productInfoSelector: {{ productInfoSelector | json}} || "",
+        formInsertPosition: {{ formInsertPosition | json}} || "",
+        imageSelector: {{ imageSelector | json}} || "",
+        loaderSelector: {{ loaderSelector | json}} || ""
+    };
+
+    PrintessShopifySlimUi.initializeSections(printessSettings).then((printessProductIntegrations) => {
+      window["printessProductIntegrations"] = printessProductIntegrations;
+    });
+  });
+</script>
