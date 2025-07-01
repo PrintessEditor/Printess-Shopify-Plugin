@@ -195,7 +195,7 @@
         try {
             const response = await this._state.createSaveToken();
             PrintessShopifySlimUi.addOrSetBasketInput(this._productForm, "properties[_printessSaveToken]", response.saveToken);
-            PrintessShopifySlimUi.addOrSetBasketInput(this._productForm, "properties[_printessThumbnailUrl]", response.thumbnailUrl);
+            PrintessShopifySlimUi.addOrSetBasketInput(this._productForm, "properties[_printessThumbnail]", response.thumbnailUrl);
             this.updateVariantInput();
         }
         catch (e) {
