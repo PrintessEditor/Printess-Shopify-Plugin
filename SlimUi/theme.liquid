@@ -1,0 +1,9 @@
+<!-- Printess Slim Ui -->
+  <script src="{{ 'printessShopifyGraphqlApi.js' | asset_url }}" defer="defer"></script>
+  <script src="{{ 'printessShopifySlimUi.js' | asset_url }}" defer="defer"></script>
+  {{ 'printessSlimUi.css' | asset_url | stylesheet_tag }}
+
+    <script type="module">
+      window["PrintessSlimUi"] = await import("https://editor.printess.com/v/nightly/slim-ui.js");
+    </script>
+<!-- /Printess Slim Ui -->

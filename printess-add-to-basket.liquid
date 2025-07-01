@@ -182,6 +182,11 @@
       addedAdditionalProperties = true;
     {% endif %}
 
+    {% if product.metafields.printess.formFieldAsProperties != blank %}
+      additionalProperties["printess.formFieldAsProperties"] = {{ product.metafields.printess.formFieldAsProperties | json }};
+      addedAdditionalProperties = true;
+    {% endif %}
+
     {% if product.metafields.printess.dropshipBundlingId %}
       additionalProperties["dropshipBundlingId"] = {{ product.metafields.printess.dropshipBundlingId | json }};
       addedAdditionalProperties = true;

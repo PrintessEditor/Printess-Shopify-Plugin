@@ -262,6 +262,12 @@ class PrintessEditor {
                     }
                     break;
                 }
+                case "getFormField": {
+                    if (callbacks && typeof callbacks.onGetFormField === "function") {
+                        callbacks.onGetFormField(evt.data.result);
+                    }
+                    break;
+                }
                 case 'save': {
                     if (callbacks && typeof callbacks.onSaveAsync === "function") {
                         callbacks.onSaveAsync(evt.data.token);
@@ -557,6 +563,19 @@ class PrintessEditor {
         }
         return ret || 'Some-Unique-Basket-Or-Session-Id';
     }
+    async getFormFieldValue(formFieldName) {
+        if (this.usePanelUi()) {
+            const editor = this.getPrintessComponent();
+            if (editor && editor.editor) {
+                const formFieldValue = await editor.editor.api.getFormField(formFieldName);
+                if (formFieldValue) {
+                }
+            }
+        }
+        else {
+            document.getElementById("printess")?.contentWindow?.postMessage({ cmd: "getFormField", parameters: [formFieldName] }, "*");
+        }
+    }
     async showBcUiVersion(context, callbacks) {
         const that = this;
         const priceInfo = context.getPriceInfo();
@@ -596,6 +615,25 @@ class PrintessEditor {
             if (!isSaveToken && pageCount !== null && pageCount > 0) {
                 await printessComponent.editor.api.setBookInsidePages(pageCount);
             }
+            setTimeout(function () {
+                if (that.Settings.autoImportImageUrlsInFormFields === true) {
+                    try {
+                        that.downloadImages(that.getImagesInFormFields(that.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings()))).then((images) => {
+                            that.uploadImagesToBcUiEditor(images, printessComponent.editor).then((x) => {
+                            });
+                        });
+                    }
+                    catch (e) {
+                        console.error(e);
+                    }
+                }
+                if (context.hidePricesInEditor !== true) {
+                    that.calculateCurrentPrices({}, context).then((priceChangedInfo) => {
+                        printessComponent.editor.ui.refreshPriceDisplay(priceChangedInfo);
+                    });
+                }
+                callbacks.onLoadAsync(context.templateNameOrSaveToken);
+            }, 1000);
             printessComponent.editor.ui.show();
         }
         else {
@@ -730,6 +768,11 @@ class PrintessEditor {
                 }
                 else if (typeof context.onRenderFirstPageImage === "function") {
                     context.onRenderFirstPageImage(result);
+                }
+            },
+            onGetFormField: (result) => {
+                if (typeof context.onGetFormField === "function") {
+                    context.onGetFormField(result);
                 }
             },
             onSaveAsync: async (saveToken) => {
@@ -1888,6 +1931,15 @@ class PrintessShopifyCart {
                         callback = settings.getPriceForFormFields;
                     }
                 }
+                let priceMultiplication = 1.0;
+                const additionalLineItemProperties = this.cartItemConfig.additionalSettings ? this.cartItemConfig.additionalSettings : null;
+                if (additionalLineItemProperties && additionalLineItemProperties && typeof additionalLineItemProperties["circulationRecordCount"] !== "undefined") {
+                    let printedRecordsCount = 0;
+                    const storedValue = parseInt(additionalLineItemProperties["circulationRecordCount"]);
+                    if (!isNaN(storedValue) && isFinite(storedValue)) {
+                        priceMultiplication = storedValue;
+                    }
+                }
                 if (that.cartItemConfig.tableQuantityField) {
                     let price = 0;
                     if (that.tableQuantityVariants) {
@@ -1921,7 +1973,7 @@ class PrintessShopifyCart {
                             console.error(e);
                         }
                     }
-                    return price;
+                    return price * priceMultiplication;
                 }
                 else {
                     const variant = await that.getVariantForFormFields();
@@ -1939,7 +1991,7 @@ class PrintessShopifyCart {
                             console.error(e);
                         }
                     }
-                    return variant.price.amount;
+                    return variant.price.amount * priceMultiplication;
                 }
             },
             getFormFieldMappings: function () {
@@ -2073,7 +2125,7 @@ class PrintessShopifyCart {
                             }
                         }
                         if (!isNaN(intValue) && isFinite(intValue) && printedRecordsCount !== intValue) {
-                            additionalLineItemProperties["circulationRecordCount"] = printedRecordsCount.toString();
+                            additionalLineItemProperties["circulationRecordCount"] = intValue.toString();
                         }
                         break;
                     }
@@ -2299,6 +2351,10 @@ class PrintessShopifyCart {
             const names = PrintessShopifyCart.parseTableQuantityField(this.cartItemConfig.tableQuantityField);
             if (names.quantityColumn) {
                 let quantity = PrintessShopifyCart.readBasketItemQuantityInput(settings.basketItemId);
+                if (quantity === null) {
+                    //Quantity control not found, so use cart item quantity
+                    quantity = settings.quantity || 1;
+                }
                 this.tableQuantityVariants = {
                     "tableName": names.tableName,
                     "quantityColumnName": names.quantityColumn,
@@ -2418,15 +2474,17 @@ class PrintessShopifyCart {
             cartItemSelector = cartItemSelector || ".cart-item";
             quantitySelectorSelector = quantitySelectorSelector || "quantity-input,.cart-quantity,.quantity";
             recordQuantityText = (recordQuantityText || "{NUMBER} Records");
-            let additionalProperties = {};
-            try {
-                additionalProperties = JSON.parse(cartItemProperties["_printessAdditionalProperties"]);
-            }
-            catch (e) {
-                //For some reason this is sometimes html encoded
-                var txt = document.createElement("textarea");
-                txt.innerHTML = cartItemProperties["_printessAdditionalProperties"];
-                additionalProperties = JSON.parse(txt.value);
+            let additionalProperties = cartItemProperties["_printessAdditionalProperties"];
+            if (typeof additionalProperties === "string") {
+                try {
+                    additionalProperties = JSON.parse(additionalProperties);
+                }
+                catch (e) {
+                    //For some reason this is sometimes html encoded
+                    var txt = document.createElement("textarea");
+                    txt.innerHTML = cartItemProperties["_printessAdditionalProperties"];
+                    additionalProperties = JSON.parse(txt.value);
+                }
             }
             if (additionalProperties && additionalProperties["circulationRecordCount"]) {
                 const storedValue = parseInt(additionalProperties["circulationRecordCount"]);
@@ -2849,6 +2907,27 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     }, 0);
                 }
             },
+            getOptionNameAndValue: (product, formField, value, label, valueLabel) => {
+                if (product && product.optionDetails) {
+                    let option = product.optionDetails.filter(x => x.name === formField);
+                    if (!option || option.length === 0) {
+                        option = product.optionDetails.filter(x => x.name === label);
+                    }
+                    if (option && option.length > 0) {
+                        let filteredValue = option[0].values.filter(x => x.name === value);
+                        if (!filteredValue || filteredValue.length === 0) {
+                            filteredValue = option[0].values.filter(x => x.name === valueLabel);
+                        }
+                        if (filteredValue && filteredValue.length > 0) {
+                            return {
+                                name: option[0].name,
+                                value: filteredValue[0].name
+                            };
+                        }
+                    }
+                }
+                return null;
+            },
             setFormFieldValue: (product, formField, value, formFieldLabel, valueLabel) => {
                 //Radio buttons
                 let inputs = document.querySelectorAll(`input[type="radio"]`);
@@ -2917,23 +2996,30 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 //Text boxes
                 inputs = document.querySelectorAll(`input[type="text"],input[type="hidden"],input[type="color"],input[type="date"],input[type="datetime-local"],input[type="email"],input[type="month"],input[type="number"],input[type="tel"],input[type="time"],input[type="url"],input[type="week"]`);
                 if (inputs && inputs.length > 0) {
+                    const nameAndValue = editor.getOptionNameAndValue(product, formField, value, formFieldLabel, valueLabel);
                     inputs.forEach((el) => {
                         const dataOptionPosition = el.getAttribute("data-option-position") || el.getAttribute("data-option-index");
                         const dataOptionName = el.getAttribute("data-option-name") || el.getAttribute("data-name") || el.getAttribute("name") || el.getAttribute("aria-label") || el.getAttribute("data-index");
                         const initialName = editor.evaluateInputName(product, el.getAttribute("name"), !editor.ignoreDataOptionIndex ? dataOptionPosition : "", dataOptionName, el.getAttribute("data-option-value-id"));
                         const initialValue = editor.evaluateInputValue(product, initialName, !editor.ignoreDataOptionIndex ? dataOptionPosition : "", el.value, el.getAttribute("data-option-value-id"));
                         let valueChanged = false;
-                        if (initialName === formField) {
-                            if (!valueChanged && el.getAttribute("value") !== initialValue) {
+                        if (nameAndValue) {
+                            if (initialName === nameAndValue.name && initialValue !== nameAndValue.value) {
                                 valueChanged = true;
+                                el.setAttribute("value", nameAndValue.value);
                             }
-                            el.setAttribute("value", initialValue);
                         }
-                        else if (initialName === formFieldLabel) {
-                            if (!valueChanged && el.getAttribute("value") !== valueLabel) {
-                                valueChanged = true;
+                        else {
+                            if (initialName === formField) {
+                                if (initialValue !== value) {
+                                    valueChanged = true;
+                                    el.setAttribute("value", value);
+                                }
                             }
-                            el.setAttribute("value", valueLabel);
+                            else if (initialName === formFieldLabel && initialValue !== valueLabel) {
+                                valueChanged = true;
+                                el.setAttribute("value", valueLabel);
+                            }
                         }
                         if (valueChanged) {
                             el.dispatchEvent(new Event('change'));
@@ -3145,6 +3231,29 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     return true;
                 }
                 return false;
+            },
+            parseFormFieldAsPropertyValue(value) {
+                if (!value) {
+                    return;
+                }
+                try {
+                    const propertyDefs = JSON.parse(value);
+                    if (propertyDefs) {
+                        return propertyDefs;
+                    }
+                }
+                catch (e) {
+                    const splits = value.split(",");
+                    const ret = [];
+                    splits.forEach((x) => {
+                        ret.push({
+                            formfieldName: x,
+                            propertyName: x
+                        });
+                        return ret;
+                    });
+                }
+                return [];
             },
             createShopContext: (settings) => {
                 const conf = PrintessEditor && PrintessEditor.getGlobalShopSettings ? PrintessEditor.getGlobalShopSettings() : {};
@@ -3369,6 +3478,15 @@ const initPrintessShopifyEditor = (printessSettings) => {
                                 callback = settings.getPriceForFormFields;
                             }
                         }
+                        let priceMultiplication = 1.0;
+                        if (settings.additionalLineItemProperties && typeof settings.additionalLineItemProperties["circulationRecordCount"] !== "undefined") {
+                            let printedRecordsCount = 0;
+                            const additionalLineItemProperties = settings.additionalLineItemProperties || {};
+                            const storedValue = parseInt(additionalLineItemProperties["circulationRecordCount"]);
+                            if (!isNaN(storedValue) && isFinite(storedValue)) {
+                                priceMultiplication = storedValue;
+                            }
+                        }
                         if (settings.tableQuantityField) {
                             let price = 0;
                             if (editor.tableQuantityVariants) {
@@ -3399,20 +3517,11 @@ const initPrintessShopifyEditor = (printessSettings) => {
                                     console.error(e);
                                 }
                             }
-                            return price;
+                            return price * priceMultiplication;
                         }
                         else {
                             const variantRelevantOptions = editor.getProductOptionValuesForVariants(formFields, settings.product);
                             const variant = editor.getVariantByProductOptions(formFields, settings.product, true);
-                            let priceMultiplication = 1.0;
-                            if (settings.additionalLineItemProperties && typeof settings.additionalLineItemProperties["circulationRecordCount"] !== "undefined") {
-                                let printedRecordsCount = 0;
-                                const additionalLineItemProperties = settings.additionalLineItemProperties || {};
-                                const storedValue = parseInt(additionalLineItemProperties["circulationRecordCount"]);
-                                if (!isNaN(storedValue) && isFinite(storedValue)) {
-                                    priceMultiplication = storedValue;
-                                }
-                            }
                             const callbackParams = {
                                 selectedVariant: variant,
                                 formFieldValues: formFields,
@@ -3501,6 +3610,11 @@ const initPrintessShopifyEditor = (printessSettings) => {
                         }
                         catch (e) {
                             console.error(e);
+                        }
+                        if (settings.addFormfieldAsProperty) {
+                            const properties = editor.parseFormFieldAsPropertyValue(settings.addFormfieldAsProperty);
+                            properties.forEach((x) => {
+                            });
                         }
                     },
                     editorClosed: (closeButtonClicked) => {
@@ -4087,6 +4201,9 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     return parseInt(input.getAttribute("value"));
                 }
                 return null;
+            },
+            onGetFormField: (result) => {
+                alert(JSON.stringify(result));
             }
         };
         window["printessShopifyEditor"] = editor;

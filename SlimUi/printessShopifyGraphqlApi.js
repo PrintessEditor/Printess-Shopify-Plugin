@@ -236,6 +236,53 @@
         }
         return null;
     }
+    async GetProductVariantById(id) {
+        const queryVariables = {};
+        queryVariables["variantId"] = "gid://shopify/ProductVariant/" + id.toString();
+        const query = {
+            query: `
+                query GetProductVariantById($variantId: ID!) {
+                    productVariant(id: $variantId) {
+                        title,
+                        id,
+                        available: availableForSale,
+                        requires_shipping: requiresShipping,
+                        taxable,
+                        sku,
+                        printessTemplateName: metafield(namespace: "printess", key: "templateName") {
+                            value
+                        },
+                        price {amount},
+                        optionLookup: selectedOptions {
+                            name,
+                            value
+                        }
+                    }
+                }`,
+            variables: queryVariables
+        };
+        const variantResponse = await this.sendGQl(query, "productVariant");
+        if (variantResponse) {
+            const mapVariant = (variant) => {
+                return {
+                    ...variant,
+                    id: PrintessShopifyGraphQlApi.parseShopifyId(variant.id),
+                    option1: variant.optionLookup && variant.optionLookup.length > 0 ? variant.optionLookup[0].value : null,
+                    option2: variant.optionLookup && variant.optionLookup.length > 1 ? variant.optionLookup[1].value : null,
+                    option3: variant.optionLookup && variant.optionLookup.length > 2 ? variant.optionLookup[2].value : null,
+                    options: !variant.optionLookup ? null : variant.optionLookup.map(x => x.value),
+                    price: variant.price && typeof variant.price.amount === "string" ? { amount: parseFloat(variant.price.amount) } : variant.price
+                };
+            };
+            if (variantResponse.variantBySelectedOptions) {
+                return mapVariant(variantResponse.variantBySelectedOptions);
+            }
+            else {
+                return null;
+            }
+        }
+        return null;
+    }
     getProductVariantsInternal(productId, cursor = null) {
         const query = {
             query: `
