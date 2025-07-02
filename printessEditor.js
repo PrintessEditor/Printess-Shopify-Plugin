@@ -1260,6 +1260,53 @@ class PrintessShopifyGraphQlApi {
         }
         return null;
     }
+    async GetProductVariantById(id) {
+        const queryVariables = {};
+        queryVariables["variantId"] = "gid://shopify/ProductVariant/" + id.toString();
+        const query = {
+            query: `
+                query GetProductVariantById($variantId: ID!) {
+                    productVariant(id: $variantId) {
+                        title,
+                        id,
+                        available: availableForSale,
+                        requires_shipping: requiresShipping,
+                        taxable,
+                        sku,
+                        printessTemplateName: metafield(namespace: "printess", key: "templateName") {
+                            value
+                        },
+                        price {amount},
+                        optionLookup: selectedOptions {
+                            name,
+                            value
+                        }
+                    }
+                }`,
+            variables: queryVariables
+        };
+        const variantResponse = await this.sendGQl(query, "productVariant");
+        if (variantResponse) {
+            const mapVariant = (variant) => {
+                return {
+                    ...variant,
+                    id: PrintessShopifyGraphQlApi.parseShopifyId(variant.id),
+                    option1: variant.optionLookup && variant.optionLookup.length > 0 ? variant.optionLookup[0].value : null,
+                    option2: variant.optionLookup && variant.optionLookup.length > 1 ? variant.optionLookup[1].value : null,
+                    option3: variant.optionLookup && variant.optionLookup.length > 2 ? variant.optionLookup[2].value : null,
+                    options: !variant.optionLookup ? null : variant.optionLookup.map(x => x.value),
+                    price: variant.price && typeof variant.price.amount === "string" ? { amount: parseFloat(variant.price.amount) } : variant.price
+                };
+            };
+            if (variantResponse.variantBySelectedOptions) {
+                return mapVariant(variantResponse.variantBySelectedOptions);
+            }
+            else {
+                return null;
+            }
+        }
+        return null;
+    }
     getProductVariantsInternal(productId, cursor = null) {
         const query = {
             query: `
@@ -1332,6 +1379,7 @@ class PrintessShopifyGraphQlApi {
 class PrintessShopifyCart {
     constructor(printessSettings) {
         this.onFirstPageImageToken = "";
+        this.formFieldAsProperties = {};
         this.settings = printessSettings;
         this.shopifyApi = new PrintessShopifyGraphQlApi(printessSettings.graphQlToken);
     }
@@ -1658,6 +1706,14 @@ class PrintessShopifyCart {
                 additionalProperties["printQty"] = quantity.toString();
             }
         }
+        if (additionalProperties && additionalProperties["formFieldsAsProperties"]) {
+            const fields = PrintessShopifyCart.parseFormFieldAsPropertyValue(additionalProperties && additionalProperties["formFieldsAsProperties"]);
+            fields.forEach((x, index) => {
+                if (typeof this.formFieldAsProperties[x.formfieldName] !== "undefined") {
+                    basketItemProperties[x.propertyName] = typeof this.formFieldAsProperties[x.formfieldName] !== "undefined" ? this.formFieldAsProperties[x.formfieldName] : x.defaultValue || "";
+                }
+            });
+        }
         basketItemProperties = {
             ...basketItemProperties,
             _printessSaveToken: saveToken,
@@ -1829,6 +1885,12 @@ class PrintessShopifyCart {
                         }
                     }
                     return;
+                }
+                if (typeof that.formFieldAsProperties[formField] !== "undefined") {
+                    that.formFieldAsProperties[formField] = valueLabel || value || "";
+                }
+                else if (typeof that.formFieldAsProperties[formFieldLabel] !== "undefined") {
+                    that.formFieldAsProperties[formFieldLabel] = valueLabel || value || "";
                 }
                 if (that.basketItemVariantOptions) {
                     for (const itemName in that.basketItemVariantOptions) {
@@ -2172,7 +2234,30 @@ class PrintessShopifyCart {
         }
         return ret;
     }
-    static parseBasketItemConfig(product, basketItemOptions, unknownSettings, variantSettings) {
+    static parseFormFieldAsPropertyValue(value) {
+        if (!value) {
+            return;
+        }
+        try {
+            const propertyDefs = JSON.parse(value);
+            if (propertyDefs) {
+                return propertyDefs;
+            }
+        }
+        catch (e) {
+            const splits = value.split(",");
+            const ret = [];
+            splits.forEach((x) => {
+                ret.push({
+                    formfieldName: x,
+                    propertyName: x
+                });
+            });
+            return ret;
+        }
+        return [];
+    }
+    static parseBasketItemConfig(product, basketItemOptions, unknownSettings, variantSettings, formFieldsAsProeprties) {
         const basketItemConfig = {
             templateNameOrSaveToken: null,
             productDefinitionId: null,
@@ -2254,6 +2339,17 @@ class PrintessShopifyCart {
                                             case "tableQuantityField": {
                                                 basketItemConfig.tableQuantityField = basketItemConfig.additionalSettings[settingName];
                                                 break;
+                                            }
+                                            case "formFieldsAsProperties": {
+                                                const fields = PrintessShopifyCart.parseFormFieldAsPropertyValue(basketItemConfig.additionalSettings[settingName]);
+                                                fields.forEach((x) => {
+                                                    if (typeof basketItemOptions[x.propertyName] !== "undefined") {
+                                                        formFieldsAsProeprties[x.formfieldName] = basketItemOptions[x.propertyName] || "";
+                                                    }
+                                                    else {
+                                                        formFieldsAsProeprties[x.formfieldName] = x.defaultValue || "";
+                                                    }
+                                                });
                                             }
                                             default: {
                                             }
@@ -2382,7 +2478,7 @@ class PrintessShopifyCart {
         this.tableQuantityVariants = null;
         this.lastSaveToken = "";
         this.originalSaveToken = "";
-        this.cartItemConfig = PrintessShopifyCart.parseBasketItemConfig(this.product, showSettings.basketItemOptions, this.basketItemOptions, this.basketItemVariantOptions) || {};
+        this.cartItemConfig = PrintessShopifyCart.parseBasketItemConfig(this.product, showSettings.basketItemOptions, this.basketItemOptions, this.basketItemVariantOptions, this.formFieldAsProperties) || {};
         this.cartItemConfig.basketItemId = showSettings.basketItemId;
         this.initialSaveToken = this.cartItemConfig.templateNameOrSaveToken && this.cartItemConfig.templateNameOrSaveToken.indexOf("st:") === 0 ? this.cartItemConfig.templateNameOrSaveToken : "";
         this.initTableQuantityVariants(showSettings);
@@ -2549,6 +2645,7 @@ const initPrintessShopifyEditor = (printessSettings) => {
             originalSaveToken: "",
             onRenderFirstPageImageToken: "",
             ignoreDataOptionIndex: printessSettings && typeof printessSettings.ignoreDataOptionIndex !== "undefined" && printessSettings.ignoreDataOptionIndex === true, //Some themes write data-option-position or data-option-index as option index some as value position inside the option
+            formFieldAsProperties: {},
             debounce: function (func, timeout = 300) {
                 let timer = undefined;
                 return (...args) => {
@@ -3168,6 +3265,10 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 else if (editor.initialSaveToken) {
                     editor.originalSaveToken = editor.initialSaveToken;
                 }
+                if (settings.additionalLineItemProperties && settings.additionalLineItemProperties["formFieldsAsProperties"]) {
+                    const fields = editor.parseFormFieldAsPropertyValue(settings.additionalLineItemProperties["formFieldsAsProperties"]);
+                    fields.forEach(x => editor.formFieldAsProperties[x.formfieldName] = (x.defaultValue || ""));
+                }
                 if (typeof window["initPrintessEditor"] === "function") {
                     const editor = window["initPrintessEditor"](printessSettings);
                     editor.show(shopContext);
@@ -3250,8 +3351,8 @@ const initPrintessShopifyEditor = (printessSettings) => {
                             formfieldName: x,
                             propertyName: x
                         });
-                        return ret;
                     });
+                    return ret;
                 }
                 return [];
             },
@@ -3341,6 +3442,12 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     },
                     onFormFieldChanged: (formField, value, formFieldLabel, valueLabel) => {
                         let formFieldChangedCallback = null;
+                        if (typeof editor.formFieldAsProperties[formField] !== "undefined") {
+                            editor.formFieldAsProperties[formField] = valueLabel || value || "";
+                        }
+                        else if (typeof editor.formFieldAsProperties[formFieldLabel] !== "undefined") {
+                            editor.formFieldAsProperties[formFieldLabel] = valueLabel || value || "";
+                        }
                         if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined" && context.additionalAttachParams["pageCountFormField"] === formField) {
                             if (settings.product.optionDetails) {
                                 const selectedOption = settings.product.optionDetails.filter(x => x.name === formField);
@@ -3610,11 +3717,6 @@ const initPrintessShopifyEditor = (printessSettings) => {
                         }
                         catch (e) {
                             console.error(e);
-                        }
-                        if (settings.addFormfieldAsProperty) {
-                            const properties = editor.parseFormFieldAsPropertyValue(settings.addFormfieldAsProperty);
-                            properties.forEach((x) => {
-                            });
                         }
                     },
                     editorClosed: (closeButtonClicked) => {
@@ -3935,6 +4037,14 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessOptionValueMappings]", "printessOptionValueMappingsEdit" + settings.product.id, "" + settings.optionValueMappings || "");
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessProductType]", "printessProductTypeEdit" + settings.product.id, settings.productType || "");
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessTheme]", "printessThemeEdit" + settings.product.id, printessSettings.theme || "");
+                if (settings.additionalLineItemProperties && settings.additionalLineItemProperties["formFieldsAsProperties"]) {
+                    const fields = editor.parseFormFieldAsPropertyValue(settings.additionalLineItemProperties["formFieldsAsProperties"]);
+                    fields.forEach((x, index) => {
+                        if (typeof editor.formFieldAsProperties[x.formfieldName] !== "undefined") {
+                            editor.addOrRemoveTextField(editor.productFormSelector, "properties[" + x.propertyName + "]", "ffProperty" + index + settings.product.id, typeof editor.formFieldAsProperties[x.formfieldName] !== "undefined" ? editor.formFieldAsProperties[x.formfieldName] : x.defaultValue || "");
+                        }
+                    });
+                }
                 //in some cases the id field is not correctly set and we have to set it (only do it in case we are having variant related options)
                 const selectedOptions = typeof settings.basketItemId !== "undefined" && settings.basketItemId ? settings.basketItemOptions : editor.getCurrentProductOptionValues(settings.product);
                 const writeBackVariant = editor.hasVariantRelatedOptions(settings.product, selectedOptions);
@@ -4097,6 +4207,14 @@ const initPrintessShopifyEditor = (printessSettings) => {
                                 _printessDpi: "" + settings.outputDpi || "300",
                                 _printessAdditionalProperties: settings.additionalLineItemProperties ? JSON.stringify(settings.additionalLineItemProperties) : "{}"
                             };
+                            if (settings.additionalLineItemProperties && settings.additionalLineItemProperties["formFieldsAsProperties"]) {
+                                const fields = editor.parseFormFieldAsPropertyValue(settings.additionalLineItemProperties["formFieldsAsProperties"]);
+                                fields.forEach((x, index) => {
+                                    if (typeof editor.formFieldAsProperties[x.formfieldName] !== "undefined") {
+                                        basketItemProperties[x.propertyName] = typeof editor.formFieldAsProperties[x.formfieldName] !== "undefined" ? editor.formFieldAsProperties[x.formfieldName] : x.defaultValue || "";
+                                    }
+                                });
+                            }
                             let quantity = typeof settings.quantity !== "undefined" && settings.quantity > 1 ? settings.quantity : 1;
                             if (settings.additionalLineItemProperties && typeof settings.additionalLineItemProperties["circulationRecordCount"] !== "undefined") {
                                 const storedValue = parseInt(settings.additionalLineItemProperties["circulationRecordCount"]);

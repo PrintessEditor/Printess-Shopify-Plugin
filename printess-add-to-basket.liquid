@@ -183,7 +183,7 @@
     {% endif %}
 
     {% if product.metafields.printess.formFieldAsProperties != blank %}
-      additionalProperties["printess.formFieldAsProperties"] = {{ product.metafields.printess.formFieldAsProperties | json }};
+      additionalProperties["formFieldAsProperties"] = {{ product.metafields.printess.formFieldAsProperties | json }};
       addedAdditionalProperties = true;
     {% endif %}
 
@@ -249,7 +249,7 @@
 <script>
 document.addEventListener("DOMContentLoaded", function() {
       const editor = typeof initPrintessShopifyEditor !== "undefined" ? initPrintessShopifyEditor({
-                                                                                                    "theme": {% if product.metafields.printess.theme != blank %}{{ product.metafields.printess.theme | json }}{% else %}{{ theme | json }}{% endif %},
+                                                                                                    "theme": {% if product.metafields.printess.theme != blank %}{{ product.metafields.printess.theme | json }}{% else if theme != blank %}{{ theme | json }}{% else %}""{% endif %},
                                                                                                     "shopToken": {{ shopToken | json }},
                                                                                                     "startupLogoUrl": {{ startupLogoUrl | json }},
                                                                                                     "showStartupAnimation": {% if showStartupAnimation == true %} true {% else %} false {% endif %},

@@ -28,6 +28,15 @@ slider-component ul li .loading-overlay__spinner.printess-loader-visible {
   height: 68px;
 }
 
+.printess-image-progress-wrapper {
+  z-index: 999999;
+  position: absolute;
+  top: 0;
+  width: 100%;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.7)
+}
+
 
 
 .printess-progress-wrapper>.printess-circle {

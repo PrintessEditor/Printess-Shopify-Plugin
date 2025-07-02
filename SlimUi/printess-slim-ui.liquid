@@ -20,6 +20,7 @@
     - cancelCaption: { String }
     - formInsertPosition: { Boolean }
     - ignoreDataOptionIndex: { Number }
+    - shopThemeName : { String }
 
   Usage:
   {% render 'printess-slim-ui',
@@ -45,6 +46,7 @@
           cssAddToBasketButtonSelector:  {{ cssAddToBasketButtonSelector | json}} || null,
           cssVariantSwitchSelector:  {{ cssVariantSwitchSelector | json}} || null
         },
+        shopThemeName: {{ shopThemeName | json}} || null,
         captions: {
           addToBasket: {{ addToBasket | json}} || "Add to basket",
           saveBasketItem: {{ saveBasketItem | json}} || "Add to basket",
