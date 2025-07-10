@@ -24,6 +24,9 @@
     - productButtonSelector: {String} The css selector for the add to basket button
     - legacyAddToBasket: {Boolean} Do not use the add to basket button to submit the item to the basket, but add it via ajax call
     - printQuantityOption: {String} The product option that indicates the print quantity (in case the shop auantity should not be used)
+    - basketId: { String } The current session id (Must be unique between different shop users, is auto generated if not provided)
+    - shopUserId: { String } The current logged in user id, must be unique over all shop users
+    - autoImportUserImages: { Boolean } Autoimports all images that have been uploaded by the current user
     Usage:
     {% render 'printess-add-to-basket',
       product: product,
@@ -46,7 +49,10 @@
       productFormSelector: "",
       productButtonSelector: "",
       legacyAddToBasket: true,
-      printQuantityOption: ""
+      printQuantityOption: "",
+      basketId: null,
+      shopUserId: null,
+      autoImportUserImages: false
     %}
 {% endcomment %}
 
@@ -262,7 +268,10 @@ document.addEventListener("DOMContentLoaded", function() {
                                                                                                     "ignoreDataOptionIndex": {% if ignoreDataOptionIndex == true %} true {% else %} false {% endif %},
                                                                                                     "productFormSelector": "{{productFormSelector}}" || "",
                                                                                                     "productButtonSelector": "{{productButtonSelector}}" || "",
-                                                                                                    "uiVersion": {% if product.metafields.printess.uiVersion != blank %} {{ product.metafields.printess.uiVersion | json }} {% else %} "" {% endif %}
+                                                                                                    "uiVersion": {% if product.metafields.printess.uiVersion != blank %} {{ product.metafields.printess.uiVersion | json }} {% else %} "" {% endif %},
+                                                                                                    "basketId": {% if basketId != blank %}{{ basketId | json }}{% else %}null{% endif %},
+                                                                                                    "shopUserId": {% if shopUserId != blank %}{{ shopUserId | json }}{% else %}null{% endif %},
+                                                                                                    "autoImportUserImages": {{ autoImportUserImages | json }} === true
                                                                                                   }) : null;
       let templateName = {{ printessTemplateName | json }};
       const product = {{ product | json }};
