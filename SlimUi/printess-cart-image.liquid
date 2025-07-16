@@ -1,0 +1,35 @@
+{% comment %}
+  Renders the printess edit button inside the cart.
+  Version 2.6
+
+  Accepts:
+  - item: { Object } cart line item.
+  - width: { String } the image width.
+  - wrapperClasses: { String } class list to add to the printess wrapper div
+  - buttonCaption: { String }
+  - quantitySelector: { String }
+  - cartItemSelector: { String }
+
+{% endcomment %}
+
+<!--
+printesssavetoken
+basketkey
+qty
+ -->
+
+<div class="cart-item__image-container gradient global-media-settings printess-cart-image-wrapper {% if wrapperClasses != blank %}{{ wrapperClasses }}{% else %}{% endif %}">
+  {% if item.properties._printessThumbnail != blank %}
+    <img
+      src="{{ item.properties._printessThumbnail }}"
+      class="cart-item__image"
+      alt="{{ item.image.alt | escape }}"
+      loading="lazy"
+      width="{{ width }}"
+      onclick='PrintessShopifySlimUiCart.openProductPage({{ item.properties._printessSaveToken | json }}, {{ item.url | json }}, {{ item.key | json }}, {{ item.quantity | json }}, {% if quantitySelector != blank %}{{ quantitySelector | json }}{%else%}""{%endif%}, {% if cartItemSelector != blank %}{{ cartItemSelector | json }}{%else%}""{%endif%});'
+    >
+  {% endif %}
+  <button type="button" id="printessButton{{ item.key | replace: "-", "_" | replace: ":", "_" }}" class="printess-edit-button button" onclick='PrintessShopifySlimUiCart.openProductPage({{ item.properties._printessSaveToken | json }}, {{ item.url | json }}, {{ item.key | json }}, {{ item.quantity | json }}, {% if quantitySelector != blank %}{{ quantitySelector | json }}{%else%}""{%endif%}, {% if cartItemSelector != blank %}{{ cartItemSelector | json }}{%else%}""{%endif%});'>
+    {% if buttonCaption != blank %}{{ buttonCaption | escape }}{%else%}Edit{%endif%}
+  </button>
+</div>

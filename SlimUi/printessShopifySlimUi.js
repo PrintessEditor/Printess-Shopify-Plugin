@@ -6,6 +6,9 @@
     static classExists(c) {
         return typeof c === "function" && typeof c.prototype === "object";
     }
+    static sleepAsync(timeoutMs) {
+        return new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    }
     static printessQueryItem(itemQuery, callback, failedCallback = null, timeout = 200, maxRetires = 20, retries = 0) {
         if (retries >= maxRetires) {
             if (typeof failedCallback === "function") {
@@ -65,13 +68,9 @@
             this.onClassChange(loader, (observer, classList) => {
                 if (classList.indexOf("printess-loader-visible") >= 0) {
                     this.showImageProgressIndicator(true);
-                    // loader.classList.remove("hidden");
-                    // PrintessShopifySlimUi._callbacks.showProgressIndicator(that, loader);
                 }
                 else {
                     this.showImageProgressIndicator(false);
-                    // loader.classList.add("hidden");
-                    // PrintessShopifySlimUi._callbacks.hideProgressIndicator(that, loader);
                 }
             });
             let templateName = this._urlParams && this._urlParams.saveToken ? this._urlParams.saveToken : this._product.templateName.value;
@@ -100,23 +99,7 @@
             variantContainer.classList.remove("printess-hidden");
             this.showImageProgressIndicator(false);
             this.showFormsProgressIndicator(false);
-            //Add Design now button
-            const addToBasketButton = this.getUiNode("addToBasketButton");
-            if (addToBasketButton) {
-                const designNowButton = document.createElement("div");
-                designNowButton.setAttribute("class", addToBasketButton.classList.toString());
-                designNowButton.classList.remove("printess-hidden");
-                //designNowButton.classList.add.apply(this, this._settings.buttonClasses.split(" "));
-                if (addToBasketButton.children) {
-                    for (let i = 0; i < addToBasketButton.children.length; ++i) {
-                        designNowButton.appendChild(addToBasketButton.children[i].cloneNode(true));
-                    }
-                }
-                designNowButton.addEventListener('click', function () {
-                    that.onAddToBasket();
-                });
-                addToBasketButton.after(designNowButton);
-            }
+            this.addAddToBasketButton();
         }
         catch (e) {
             console.error(e);
@@ -127,32 +110,93 @@
             }
         }
     }
+    async onBasketItemClick(designNowButton) {
+        this.showFormsProgressIndicator(true);
+        this.showImageProgressIndicator(true);
+        PrintessShopifySlimUi.showElement(designNowButton, false);
+        try {
+            const result = await this._state.createSaveToken();
+            const currentOptions = this.getSelectedProductOptions();
+            if (this._urlParams && this._urlParams.saveToken && this._urlParams.basketKey) {
+                //Download basket item
+                const basketItem = await PrintessShopifySlimUi.getBasketItemForSaveToken(this._urlParams.saveToken);
+                if (!basketItem || (typeof basketItem.ok !== "undefined" && !basketItem.ok)) {
+                    console.error("Can not find basket item for save token " + this._urlParams.saveToken);
+                }
+                if ((await PrintessShopifySlimUi._callbacks.replaceBasketItemAsync(this, this._product, basketItem, result.saveToken, result.thumbnailUrl, currentOptions, true)) === true) {
+                    await this.onReplaceBasketItem(basketItem, result.saveToken, result.thumbnailUrl);
+                }
+            }
+            else {
+                if ((await PrintessShopifySlimUi._callbacks.addToBasketAsync(this, this._product, result.saveToken, result.thumbnailUrl, currentOptions, true)) === true) {
+                    this.onAddToBasket();
+                }
+            }
+        }
+        finally {
+            this.showFormsProgressIndicator(true);
+            this.showImageProgressIndicator(true);
+            PrintessShopifySlimUi.showElement(designNowButton, false);
+            PrintessShopifySlimUi.removeUrlParams();
+        }
+    }
+    addAddToBasketButton() {
+        const that = this;
+        const addToBasketButton = this.getUiNode("addToBasketButton");
+        if (!addToBasketButton) {
+            return;
+        }
+        if (addToBasketButton) {
+            let designNowButton = addToBasketButton.parentElement?.querySelector("printess-design-now-button");
+            if (!designNowButton) {
+                designNowButton = document.createElement("div");
+                designNowButton.setAttribute("class", addToBasketButton.classList.toString());
+                designNowButton.classList.add("printess-design-now-button");
+                designNowButton.classList.remove("printess-hidden");
+                designNowButton.addEventListener('click', async function () {
+                    await that.onBasketItemClick(designNowButton);
+                });
+                addToBasketButton.after(designNowButton);
+            }
+            let textNode = designNowButton.querySelector("span");
+            if (!textNode) {
+                textNode = document.createElement("span");
+                designNowButton.appendChild(textNode);
+            }
+            if (that._urlParams && that._urlParams.saveToken && that._urlParams.basketKey) {
+                textNode.innerText = this._settings.captions?.saveBasketItem || "Save changes";
+            }
+            else {
+                textNode.innerText = this._settings.captions?.addToBasket || "Add to basket";
+            }
+        }
+    }
+    static removeUrlParamsInString(url, params) {
+        let ret = url || "";
+        let modified = false;
+        if (params) {
+            for (const proper in params) {
+                if (params.hasOwnProperty(proper)) {
+                    const searchValue = (ret.indexOf("?" + proper) >= 0 ? "?" : "&") + proper + "=" + encodeURIComponent(params[proper]);
+                    ret = ret.replace(searchValue, "");
+                }
+            }
+        }
+        return {
+            url: ret,
+            modified: ret != url
+        };
+    }
     static removeUrlParams() {
         const urlParams = new URLSearchParams(window.location.search);
-        const saveToken = urlParams.get("printesssavetoken");
-        const basketKey = urlParams.get("basketkey");
-        const quantity = urlParams.get("qty");
-        const autoOpenEditor = urlParams.get("pao");
-        let url = window.location.href;
-        let modified = false;
-        if (saveToken) {
-            url = url.replace("printesssavetoken=" + encodeURIComponent(saveToken), "");
-            modified = true;
-        }
-        if (basketKey) {
-            url = url.replace("basketkey=" + encodeURIComponent(basketKey), "");
-            modified = true;
-        }
-        if (quantity) {
-            url = url.replace("qty=" + encodeURIComponent(quantity), "");
-            modified = true;
-        }
-        if (autoOpenEditor) {
-            url = url.replace("pao=" + encodeURIComponent(autoOpenEditor), "");
-            modified = true;
-        }
-        if (modified) {
-            window.history.replaceState({}, '', url);
+        const replaceResult = PrintessShopifySlimUi.removeUrlParamsInString(window.location.href, {
+            "printesssavetoken": urlParams.get("printesssavetoken") || "",
+            "basketkey": urlParams.get("basketkey") || "",
+            "qty": urlParams.get("qty") || "",
+            "pao": urlParams.get("pao") || ""
+        });
+        if (replaceResult.modified) {
+            window.history.replaceState({}, '', replaceResult.url);
         }
     }
     static getUrlParams() {
@@ -213,6 +257,116 @@
         if (addToBasketButton) {
             addToBasketButton.click();
         }
+    }
+    static async getBasketItemForSaveToken(saveToken) {
+        const result = await fetch('/cart.js', {
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+        if (!result || !result.ok) {
+            return result;
+        }
+        const json = await result.json();
+        const { items } = json;
+        return items.find(item => item.properties && item.properties._printessSaveToken ? item.properties && item.properties._printessSaveToken === saveToken : false);
+    }
+    readQuantity() {
+        const quantityInput = this.getUiNode("quantity");
+        if (quantityInput.value) {
+            const iValue = parseInt(quantityInput.value);
+            if (!isNaN(iValue) && isFinite(iValue) && iValue) {
+                return iValue;
+            }
+        }
+        return 1;
+    }
+    async addNewItemToBasket(saveToken, valuesToWrite, retries = 0) {
+        const result = await fetch('/cart/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                items: [valuesToWrite]
+            })
+        });
+        if (!result.ok) {
+            console.error("Unable to add item to basket: [" + result.status.toString() + "] " + result.statusText);
+            if (retries > 4) {
+                console.error("Unable to add item to basket giving up (" + saveToken + ")");
+            }
+            else {
+                await PrintessShopifySlimUi.sleepAsync(250);
+                await this.addNewItemToBasket(saveToken, valuesToWrite, retries + 1);
+            }
+        }
+    }
+    async deleteBasketItemBySaveToken(saveToken, retries = 0) {
+        const basketItem = await PrintessShopifySlimUi.getBasketItemForSaveToken(saveToken);
+        if (!basketItem) {
+            console.error("Unable to delete item from basket: [" + basketItem.status.toString() + "] " + basketItem.statusText);
+            if (retries > 4) {
+                console.error("Unable to remove item from basket giving up (" + saveToken + ")");
+            }
+            else {
+                await PrintessShopifySlimUi.sleepAsync(250);
+                await this.deleteBasketItemBySaveToken(saveToken, retries + 1);
+            }
+        }
+        else {
+            await PrintessShopifySlimUi.deleteBasketItemByKey(basketItem.key);
+        }
+    }
+    static async deleteBasketItemByKey(key, retries = 0) {
+        const result = await fetch('/cart/change.js', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                id: key,
+                quantity: 0
+            }),
+        });
+        if (!result || !result.ok) {
+            console.error("!Unable to delete item from basket: [" + result.status.toString() + "] " + result.statusText);
+            if (retries > 4) {
+                console.error("!Unable to remove item from basket giving up (Basket Item Key: " + key + ")");
+            }
+            else {
+                await PrintessShopifySlimUi.sleepAsync(250);
+                await this.deleteBasketItemByKey(key, retries + 1);
+            }
+        }
+    }
+    async onReplaceBasketItem(originalBasketItem, saveToken, thumbnailUrl) {
+        const namesToIgnore = ["fix", "newsletter"];
+        const productOptions = this.getSelectedProductOptions();
+        const selectedVariant = await this.getVariantByProductOptions(productOptions, true);
+        if (!originalBasketItem || (typeof originalBasketItem.ok !== "undefined" && !originalBasketItem.ok)) {
+            console.error("Could not find basket item for save token " + saveToken);
+        }
+        let basketItemProperties = { ...originalBasketItem.properties ? originalBasketItem.properties : {} };
+        basketItemProperties = {
+            ...basketItemProperties,
+            _printessSaveToken: saveToken,
+            _printessThumbnail: thumbnailUrl
+        };
+        const valuesToWrite = {
+            id: selectedVariant.id,
+            quantity: this.readQuantity(),
+            properties: basketItemProperties
+        };
+        await this.addNewItemToBasket(saveToken, valuesToWrite);
+        if (originalBasketItem) {
+            if (originalBasketItem && originalBasketItem.properties && originalBasketItem.properties._printessSaveToken) {
+                await this.deleteBasketItemBySaveToken(originalBasketItem.properties._printessSaveToken);
+            }
+            else {
+            }
+        }
+        window.location.replace('/cart');
     }
     static isSaveToken(templateName) {
         return (templateName || "").indexOf("st:") === 0;
@@ -467,7 +621,7 @@
                 }
             });
         }
-        //In case select / drop down is used        
+        //In case select / drop down is used
         inputs = document.querySelectorAll(`select`);
         inputs.forEach((el) => {
             const dataOptionPosition = el.getAttribute("data-option-position") || el.getAttribute("data-option-index");
@@ -688,6 +842,7 @@
                 ret.cssAddToBasketButtonSelector = ret.cssAddToBasketButtonSelector || ".btn.add-to-cart";
                 ret.cssVariantSwitchSelector = ret.cssVariantSwitchSelector || "[data-dynamic-variants-enabled]";
                 ret.cssPriceTextSelector = ret.cssPriceTextSelector || ".product__price";
+                ret.cssQuantityInputSelector = ret.cssQuantityInputSelector || '[name="quantity"]';
                 break;
             }
         }
@@ -701,6 +856,7 @@
         ret.cssProgressIndicatorSelector = ret.cssProgressIndicatorSelector || "slider-component ul li .loading-overlay__spinner,slider-component ul li .loading__spinner";
         ret.cssAddToBasketButtonSelector = ret.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"]';
         ret.cssPriceTextSelector = ret.cssPriceTextSelector || ".price__regular>span.price-item.price-item--regular";
+        ret.cssQuantityInputSelector = ret.cssQuantityInputSelector || '[name="quantity"]';
         return ret;
     }
     /** Initialization */
@@ -896,7 +1052,7 @@
         }
         return null;
     }
-    //private 
+    //private
     getUiNode(nodeName) {
         return PrintessShopifySlimUi._callbacks.getUiNode(this, nodeName, this._productContainer, null, this._settings.uiSelectors);
     }
@@ -1114,6 +1270,78 @@
                 }
                 return fullVariant.price.amount;
             },
+            addToBasket: (instance, product, saveToken, thumbnailUrl, currentOptions, add) => {
+                let addItem = add;
+                if (PrintessShopifySlimUi._registeredCallbacks && PrintessShopifySlimUi._registeredCallbacks["addToBasket"]) {
+                    for (let i = 0; i < PrintessShopifySlimUi._registeredCallbacks["addToBasket"].length; ++i) {
+                        try {
+                            const callback = PrintessShopifySlimUi._registeredCallbacks["addToBasket"][i];
+                            const x = callback(instance, product, saveToken, thumbnailUrl, currentOptions, addItem);
+                            if (typeof x !== "undefined") {
+                                addItem = x === true;
+                            }
+                        }
+                        catch (e) {
+                            console.error(e);
+                        }
+                    }
+                }
+                return addItem;
+            },
+            addToBasketAsync: async (instance, product, saveToken, thumbnailUrl, currentOptions, add) => {
+                let addItem = ret.addToBasket(instance, product, saveToken, thumbnailUrl, currentOptions, add);
+                if (PrintessShopifySlimUi._registeredCallbacks && PrintessShopifySlimUi._registeredCallbacks["addToBasketAsync"]) {
+                    for (let i = 0; i < PrintessShopifySlimUi._registeredCallbacks["addToBasketAsync"].length; ++i) {
+                        try {
+                            const callback = PrintessShopifySlimUi._registeredCallbacks["addToBasketAsync"][i];
+                            const x = await callback(instance, product, saveToken, thumbnailUrl, currentOptions, addItem);
+                            if (typeof x !== "undefined") {
+                                addItem = x === true;
+                            }
+                        }
+                        catch (e) {
+                            console.error(e);
+                        }
+                    }
+                }
+                return addItem;
+            },
+            replaceBasketItem: (instance, product, originalCartItem, saveToken, thumbnailUrl, currentOptions, replace) => {
+                let addItem = replace;
+                if (PrintessShopifySlimUi._registeredCallbacks && PrintessShopifySlimUi._registeredCallbacks["replaceBasketItem"]) {
+                    for (let i = 0; i < PrintessShopifySlimUi._registeredCallbacks["replaceBasketItem"].length; ++i) {
+                        try {
+                            const callback = PrintessShopifySlimUi._registeredCallbacks["replaceBasketItem"][i];
+                            const x = callback(instance, product, originalCartItem, saveToken, thumbnailUrl, currentOptions, addItem);
+                            if (typeof x !== "undefined") {
+                                addItem = x === true;
+                            }
+                        }
+                        catch (e) {
+                            console.error(e);
+                        }
+                    }
+                }
+                return addItem;
+            },
+            replaceBasketItemAsync: async (instance, product, originalCartItem, saveToken, thumbnailUrl, currentOptions, replace) => {
+                let addItem = ret.replaceBasketItem(instance, product, originalCartItem, saveToken, thumbnailUrl, currentOptions, replace);
+                if (PrintessShopifySlimUi._registeredCallbacks && PrintessShopifySlimUi._registeredCallbacks["replaceBasketItemAsync"]) {
+                    for (let i = 0; i < PrintessShopifySlimUi._registeredCallbacks["replaceBasketItemAsync"].length; ++i) {
+                        try {
+                            const callback = PrintessShopifySlimUi._registeredCallbacks["replaceBasketItemAsync"][i];
+                            const x = await callback(instance, product, originalCartItem, saveToken, thumbnailUrl, currentOptions, addItem);
+                            if (typeof x !== "undefined") {
+                                addItem = x === true;
+                            }
+                        }
+                        catch (e) {
+                            console.error(e);
+                        }
+                    }
+                }
+                return addItem;
+            },
             getUiNode: (instance, nodeName, productContainer, nodeUsedByPrintess, settings = null) => {
                 switch (nodeName) {
                     case "productInfo": {
@@ -1152,6 +1380,10 @@
                         nodeUsedByPrintess = ret.getUiNode(instance, "productInfo", productContainer, null, settings)?.querySelector(settings.cssVariantSwitchSelector);
                         break;
                     }
+                    case "quantity": {
+                        nodeUsedByPrintess = ret.getUiNode(instance, "productInfo", productContainer, null, settings)?.querySelector(settings.cssQuantityInputSelector);
+                        break;
+                    }
                     default:
                     //return null;
                 }
@@ -1178,4 +1410,37 @@
         return ret;
     }
 }
-PrintessShopifySlimUi._callbacks = null;
+PrintessShopifySlimUi._callbacks = null; class PrintessShopifySlimUiCart {
+    static async openProductPage(saveToken, productUrl, basketItemKey, quantity, cartItemSelector, quantitySelector) {
+        quantity = typeof quantity !== "number" || isNaN(quantity) || !isFinite(quantity) || quantity < 0 ? 1 : quantity;
+        quantitySelector = quantitySelector || ".quantity__input";
+        cartItemSelector = cartItemSelector || ".cart-item";
+        if (!productUrl) {
+            console.error("No product url provided");
+            return;
+        }
+        const editButton = document.getElementById("printessButton" + basketItemKey.replace("-", "_").replace(":", "_"));
+        if (!editButton) {
+            console.error("Unable to locate edit button for cart item with key " + basketItemKey);
+            return;
+        }
+        const cartItem = editButton.closest(cartItemSelector);
+        if (!cartItem) {
+            console.error("Unable to locate cart item node for selector " + cartItemSelector);
+            return;
+        }
+        const quantityInput = cartItem.querySelector(quantitySelector);
+        if (!quantityInput) {
+            console.error("Unable to find quantity input");
+        }
+        else {
+            const parsedQuantity = quantityInput.value ? parseInt(quantityInput.value) : quantity;
+            if (!isNaN(parsedQuantity) && isFinite(parsedQuantity) && parsedQuantity > 0) {
+                quantity = parsedQuantity;
+            }
+        }
+        const urlParams = `printesssavetoken=${encodeURIComponent(saveToken)}&basketkey=${encodeURIComponent(basketItemKey)}&qty=${quantity}`;
+        const url = productUrl + (productUrl.indexOf("?") > 0 ? "&" : "?") + urlParams;
+        window.location.replace(url);
+    }
+}

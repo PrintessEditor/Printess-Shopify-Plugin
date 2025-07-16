@@ -1,3 +1,7 @@
+/**
+  Product page
+**/
+
 slider-component ul li .product__media img.printess-loader-visible {
   opacity: 0.5;
 }
@@ -102,4 +106,18 @@ slider-component ul li .loading-overlay__spinner.printess-loader-visible {
   90% {
     stroke: #ffa700;
   }
+}
+
+/**
+  Cart Page
+**/
+.printess-cart-image-wrapper {
+  width: 100%;
+  height: 100%;
+  display: block !important;
+  text-align: center;
+}
+
+.printess-cart-image-wrapper button.printess-edit-button {
+  text-align: center;
 }

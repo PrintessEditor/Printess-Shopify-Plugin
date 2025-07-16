@@ -1,0 +1,45 @@
+<script>
+  window.addEventListener('DOMContentLoaded', () => {
+    const getFormFieldValues = function(initialValue = null) {
+      let ret = initialValue || {};
+
+      {% if product.metafields.printess.formFieldValues != blank %}
+        try {
+          const productValues = JSON.parse( {{ product.metafields.printess.formFieldValues | json }});
+
+          if(productValues) {
+            ret = {
+              ...ret,
+              ...productValues
+            };
+          }
+        } catch(e) {
+          console.error(e);
+        }
+      {% endif %}
+
+      return ret;
+    };
+
+
+    if(!window.printessGlobalConfig) {
+      window.printessGlobalConfig = {};
+    }
+
+    if(!window.printessGlobalConfig.formFields) {
+      window.printessGlobalConfig.formFields = getFormFieldValues();
+    } else {
+      if(typeof window.printessGlobalConfig.formFields === "function") {
+        const originalMethod = window.printessGlobalConfig.formFields;
+        window.printessGlobalConfig.formFields = function() {
+          return {
+            ...originalMethod(),
+            ...getFormFieldValues()
+          };
+        }
+      } else {
+        window.printessGlobalConfig.formFields = getFormFieldValues(window.printessGlobalConfig.formFields);
+      }
+    }
+  });
+</script>
