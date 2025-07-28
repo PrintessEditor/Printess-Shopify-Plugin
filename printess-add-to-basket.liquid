@@ -27,6 +27,7 @@
     - basketId: { String } The current session id (Must be unique between different shop users, is auto generated if not provided)
     - shopUserId: { String } The current logged in user id, must be unique over all shop users
     - autoImportUserImages: { Boolean } Autoimports all images that have been uploaded by the current user
+    - printTemplateName: {String} The name of the Print Settings that should be used to produce this product
     Usage:
     {% render 'printess-add-to-basket',
       product: product,
@@ -52,7 +53,8 @@
       printQuantityOption: "",
       basketId: null,
       shopUserId: null,
-      autoImportUserImages: false
+      autoImportUserImages: false,
+      printTemplateName: ""
     %}
 {% endcomment %}
 
@@ -203,6 +205,16 @@
       addedAdditionalProperties = true;
     {% else %}
       additionalProperties["uiVersion"] = "PanelUi";
+      addedAdditionalProperties = true;
+    {% endif %}
+
+    {% if printTemplateName = blank %}
+      {% if product.metafields.printess.printTemplateName != blank %}
+        additionalProperties["printTemplate"] = {{ product.metafields.printess.printTemplateName | json }};
+        addedAdditionalProperties = true;
+      {% endif %}
+    {% else %}
+      additionalProperties["printTemplate"] = {{ printTemplateName | json }};
       addedAdditionalProperties = true;
     {% endif %}
 
