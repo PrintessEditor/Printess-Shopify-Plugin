@@ -75,7 +75,7 @@
     else
       assign printessProductType = ""
     endif
-    
+
     if product.metafields.printess.productDefinitionId
       assign printessProductDefinitionId = product.metafields.printess.productDefinitionId
     else
@@ -87,23 +87,23 @@
     else
       assign printessMergeTemplates = ""
     endif
-    
+
     if settings.printess_outputdpi and settings.printess_outputdpi != blank
       assign printessOutputDpi = settings.printess_outputdpi
     else
       assign printessOutputDpi = 300
     endif
-    
+
     if product.metafields.printess.dpi
       assign printessOutputDpi = product.metafields.printess.dpi
     endif
-    
+
     if settings.printess_outputformat and settings.printess_outputformat != blank
       assign printessOutputFormat = settings.printess_outputformat
     else
       assign printessOutputFormat = "pdf"
     endif
-    
+
     if product.metafields.printess.outputFormat
       assign printessOutputFormat = product.metafields.printess.outputFormat
     endif
@@ -121,8 +121,8 @@
     const printessTemplateName = {{ printessTemplateName | json }};
     const product = {{ product | json }};
     const variantMetaData = {};
-    let metaJson = {};    
-  
+    let metaJson = {};
+
     {%- for variant in product.variants -%}
       {%- if variant.metafields.printess -%}
         {% if variant.metafields.printess.displayEditor == true or variant.metafields.printess.templateName %}
@@ -157,7 +157,7 @@
       return;
     }
 
-    if(product && product.variants) {        
+    if(product && product.variants) {
       product.variants = product.variants.filter((x) => {
         if(variantMetaData[x.id]) {
           if(variantMetaData[x.id].hideFromEditor === true) {
@@ -201,6 +201,9 @@
     {% if product.metafields.printess.uiVersion != blank %}
       additionalProperties["uiVersion"] = {{ product.metafields.printess.uiVersion | json }};
       addedAdditionalProperties = true;
+    {% else %}
+      additionalProperties["uiVersion"] = "PanelUi";
+      addedAdditionalProperties = true;
     {% endif %}
 
     const settings = {
@@ -224,7 +227,7 @@
        },
 
        onSave: function(saveToken, thumbnailUrl) {
-        
+
        }*/
     };
 
@@ -268,7 +271,7 @@ document.addEventListener("DOMContentLoaded", function() {
                                                                                                     "ignoreDataOptionIndex": {% if ignoreDataOptionIndex == true %} true {% else %} false {% endif %},
                                                                                                     "productFormSelector": "{{productFormSelector}}" || "",
                                                                                                     "productButtonSelector": "{{productButtonSelector}}" || "",
-                                                                                                    "uiVersion": {% if product.metafields.printess.uiVersion != blank %} {{ product.metafields.printess.uiVersion | json }} {% else %} "" {% endif %},
+                                                                                                    "uiVersion": {% if product.metafields.printess.uiVersion != blank %} {{ product.metafields.printess.uiVersion | json }} {% else %} "PanelUi" {% endif %},
                                                                                                     "basketId": {% if basketId != blank %}{{ basketId | json }}{% else %}null{% endif %},
                                                                                                     "shopUserId": {% if shopUserId != blank %}{{ shopUserId | json }}{% else %}null{% endif %},
                                                                                                     "autoImportUserImages": {{ autoImportUserImages | json }} === true
