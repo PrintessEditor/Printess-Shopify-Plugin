@@ -1,5 +1,5 @@
 /*Printess Shopify Integration Version: 2.7*/
-; class PrintessEditor {
+class PrintessEditor {
     constructor(settings) {
         this.calculateCurrentPrices = async (priceInfo, context) => {
             const r = await this.getPriceCategories(context);
@@ -137,7 +137,7 @@
     getPrintessComponent() {
         return document.querySelector("printess-component") || null;
     }
-    applyFormFieldMappings(formFields, mappings) {
+    static applyFormFieldMappings(formFields, mappings) {
         const ret = [];
         if (!mappings) {
             for (const ffName in formFields) {
@@ -300,7 +300,7 @@
                 case 'loaded': {
                     if (that.Settings.autoImportImageUrlsInFormFields === true) {
                         try {
-                            const images = await that.downloadImages(that.getImagesInFormFields(that.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings())));
+                            const images = await that.downloadImages(that.getImagesInFormFields(PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings())));
                             if (!that.tempUploadImages) {
                                 that.tempUploadImages = images;
                             }
@@ -319,8 +319,8 @@
                         }
                     }
                     if (that.Settings.autoImportUserImages === true) {
-                        let userId = await that.getUserId(context);
-                        let basketId = await that.getOrGenerateBasketId(context);
+                        let userId = await PrintessEditor.getUserId(context);
+                        let basketId = await PrintessEditor.getOrGenerateBasketId(context);
                         if (userId || basketId) {
                             that.uploadUserImagesToClassicEditor(iFrame, basketId, userId);
                         }
@@ -575,7 +575,7 @@
             return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
         });
     }
-    async getOrGenerateBasketId(context) {
+    static async getOrGenerateBasketId(context) {
         let ret = typeof context.getBasketId === "function" ? context.getBasketId() : "";
         if (!ret && typeof context.getBasketIdAsync === "function") {
             ret = await context.getBasketIdAsync() || null;
@@ -605,7 +605,7 @@
         }
         return ret || null;
     }
-    async getUserId(context) {
+    static async getUserId(context) {
         let ret = typeof context.getUserId === "function" ? context.getUserId() : null;
         if (!ret && typeof context.getUserIdAsync === "function") {
             ret = await context.getUserIdAsync();
@@ -633,7 +633,7 @@
         let formFields = null;
         let mergeTemplates = null;
         if (!isSaveToken) {
-            formFields = that.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings());
+            formFields = PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings());
             mergeTemplates = context.getMergeTemplates();
             if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined") {
                 const pageFormField = formFields.filter(x => x.name === context.additionalAttachParams["pageCountFormField"]);
@@ -649,6 +649,15 @@
         const loaderUrl = that.getLoaderUrl(this.Settings.editorUrl, this.Settings.editorVersion, startupParams);
         const printessLoader = await import(/* webpackIgnore: true */ loaderUrl);
         let printessComponent = that.getPrintessComponent();
+        const closeTabListener = (evt) => {
+            if (callbacks && typeof callbacks.onCloseTab === "function") {
+                callbacks.onCloseTab(evt);
+            }
+        };
+        if (this.Settings.showAlertOnTabClose === true) {
+            window.addEventListener('beforeunload', closeTabListener);
+            window.addEventListener('unload', closeTabListener);
+        }
         if (printessComponent && printessComponent.editor) {
             printessComponent.style.display = "block";
             context.renderFirstPageImageAsync = async (maxThumbnailWidth, maxThumbnailHeight) => {
@@ -672,7 +681,7 @@
                 }
                 if (that.Settings.autoImportImageUrlsInFormFields === true) {
                     try {
-                        const images = await that.downloadImages(that.getImagesInFormFields(that.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings())));
+                        const images = await that.downloadImages(that.getImagesInFormFields(PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings())));
                         await that.uploadImagesToBcUiEditor(images, printessComponent.editor);
                     }
                     catch (e) {
@@ -681,8 +690,8 @@
                 }
                 if (that.Settings.autoImportUserImages === true) {
                     try {
-                        let userId = await that.getUserId(context);
-                        let basketId = await that.getOrGenerateBasketId(context);
+                        let userId = await PrintessEditor.getUserId(context);
+                        let basketId = await PrintessEditor.getOrGenerateBasketId(context);
                         if (userId || basketId) {
                             await that.uploadUserImagesToBcUiEditor(printessComponent.editor, basketId, userId);
                         }
@@ -711,14 +720,16 @@
                 templateName: context.templateNameOrSaveToken, // "Premier Test-3",// "test Trigger Dialog",  // "price-tester", // "Premier Test", //  "Children's book", // "Label FF Test", //"test Trigger Dialog",   "test Trigger Dialog", // "Bathrobe Man", //
                 //templateVersion: "publish",//"draft"
                 translationKey: "auto", //"en"
-                basketId: await this.getOrGenerateBasketId(context),
-                shopUserId: await this.getUserId(context),
+                basketId: await PrintessEditor.getOrGenerateBasketId(context),
+                shopUserId: await PrintessEditor.getUserId(context),
                 // mobileMargin: {left: 20, right: 40, top: 30, bottom: 40},
                 // allowZoomAndPan: false,
                 snippetPriceCategoryLabels: priceInfo && priceInfo.snippetPrices ? priceInfo.snippetPrices : null,
                 theme: theme,
                 addToBasketCallback: (token, thumbnailUrl) => {
                     const addToBasket = (saveToken, thumbnailUrl) => {
+                        window.removeEventListener('beforeunload', closeTabListener);
+                        window.removeEventListener('unload', closeTabListener);
                         if (callbacks && typeof callbacks.onAddToBasketAsync === "function") {
                             callbacks.onAddToBasketAsync(token, thumbnailUrl).then(() => { });
                         }
@@ -751,6 +762,8 @@
                     }
                 },
                 backButtonCallback: (saveToken) => {
+                    window.removeEventListener('beforeunload', closeTabListener);
+                    window.removeEventListener('unload', closeTabListener);
                     that.hideBcUiVersion(context, true);
                 },
                 saveTemplateCallback: (saveToken, type) => {
@@ -779,7 +792,7 @@
                 }
                 if (that.Settings.autoImportImageUrlsInFormFields === true) {
                     try {
-                        const images = await that.downloadImages(that.getImagesInFormFields(that.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings())));
+                        const images = await that.downloadImages(that.getImagesInFormFields(PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings())));
                         await that.uploadImagesToBcUiEditor(images, printessComponent.editor);
                     }
                     catch (e) {
@@ -788,8 +801,8 @@
                 }
                 if (that.Settings.autoImportUserImages === true) {
                     try {
-                        let userId = await that.getUserId(context);
-                        let basketId = await that.getOrGenerateBasketId(context);
+                        let userId = await PrintessEditor.getUserId(context);
+                        let basketId = await PrintessEditor.getOrGenerateBasketId(context);
                         if (userId || basketId) {
                             await that.uploadUserImagesToBcUiEditor(printessComponent.editor, basketId, userId);
                         }
@@ -894,7 +907,7 @@
             let formFields = null;
             let mergeTemplates = null;
             if (!isSaveToken) {
-                formFields = this.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings());
+                formFields = PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings());
                 mergeTemplates = context.getMergeTemplates();
                 if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined") {
                     const pageFormField = formFields.filter(x => x.name === context.additionalAttachParams["pageCountFormField"]);
@@ -924,8 +937,8 @@
                         templateName: context.templateNameOrSaveToken,
                         showBuyerSide: true,
                         templateUserId: '',
-                        basketId: await this.getOrGenerateBasketId(context),
-                        shopUserId: await this.getUserId(context),
+                        basketId: await PrintessEditor.getOrGenerateBasketId(context),
+                        shopUserId: await PrintessEditor.getUserId(context),
                         formFields: formFields,
                         snippetPriceCategoryLabels: priceInfo && priceInfo.snippetPrices ? priceInfo.snippetPrices : null,
                         mergeTemplates: mergeTemplates
@@ -1620,7 +1633,7 @@ class PrintessShopifyCart {
         }
         return false;
     }
-    async addTableQuantityItems(settings, saveToken, thumbnailUrl) {
+    async addTableQuantityItems(settings, saveToken, thumbnailUrl, reloadBasket = false) {
         const that = this;
         const additionalLineItemProperties = this.cartItemConfig.additionalSettings ? { ...this.cartItemConfig.additionalSettings } : {};
         if (this.cartItemConfig.tableQuantityField && this.tableQuantityVariants && this.tableQuantityVariants.tableName) {
@@ -1666,7 +1679,7 @@ class PrintessShopifyCart {
             }
             if (quantity > 0) {
                 const valuesToWrite = {
-                    id: (await this.getVariantForFormFields()).id,
+                    id: (await this.getVariantForFormFields({ ...this.basketItemVariantOptions, ...currentVariantValues })).id,
                     quantity: quantity,
                     properties: basketItemProperties
                 };
@@ -1682,7 +1695,9 @@ class PrintessShopifyCart {
                 items: basketItems
             }),
         });
-        window.location.replace('/cart');
+        if (reloadBasket) {
+            window.location.replace('/cart');
+        }
     }
     hasVariantRelatedOptions() {
         if (this.basketItemVariantOptions) {
@@ -1769,10 +1784,11 @@ class PrintessShopifyCart {
     async replaceBasketItem(settings, saveToken, thumbnailUrl) {
         const namesToIgnore = ["fix", "newsletter"];
         if (this.cartItemConfig.tableQuantityField && this.tableQuantityVariants) {
-            await this.addTableQuantityItems(settings, saveToken, thumbnailUrl);
+            await this.addTableQuantityItems(settings, saveToken, thumbnailUrl, false);
             if (!settings.keepOriginalBasketItem === true) {
                 await this.deleteBasketItem(this.cartItemConfig.templateNameOrSaveToken);
             }
+            window.location.replace('/cart');
             return;
         }
         const selectedVariant = await this.getVariantForFormFields();
@@ -3404,6 +3420,74 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     editor.show(shopContext);
                 }
             },
+            addToBasketWithoutPersonalization: async (settings) => {
+                const globalSettings = PrintessEditor.getGlobalShopSettings();
+                if (globalSettings && typeof globalSettings.onValidateEditorOpen === "function") {
+                    try {
+                        if (!globalSettings.onValidateEditorOpen(settings)) {
+                            return;
+                        }
+                    }
+                    catch (e) {
+                        console.error(e);
+                    }
+                }
+                const shopContext = editor.createShopContext(settings);
+                shopContext.disableCartEditing = true;
+                editor.lastSaveToken = "";
+                editor.originalSaveToken = "";
+                editor.initialSaveToken = settings.templateNameOrSaveToken && settings.templateNameOrSaveToken.indexOf("st:") === 0 ? settings.templateNameOrSaveToken : "";
+                editor.initTableQuantityVariants(settings);
+                if (settings.additionalLineItemProperties && settings.additionalLineItemProperties["originalSaveToken"]) {
+                    editor.originalSaveToken = settings.additionalLineItemProperties["originalSaveToken"];
+                }
+                else if (editor.initialSaveToken) {
+                    editor.originalSaveToken = editor.initialSaveToken;
+                }
+                if (settings.additionalLineItemProperties && settings.additionalLineItemProperties["formFieldsAsProperties"]) {
+                    const fields = editor.parseFormFieldAsPropertyValue(settings.additionalLineItemProperties["formFieldsAsProperties"]);
+                    fields.forEach(x => editor.formFieldAsProperties[x.formfieldName] = (x.defaultValue || ""));
+                }
+                const isSaveToken = shopContext.templateNameOrSaveToken && shopContext.templateNameOrSaveToken.indexOf("st:") === 0;
+                const formFields = {};
+                let mergeTemplates = null;
+                if (!isSaveToken) {
+                    PrintessEditor.applyFormFieldMappings(shopContext.getCurrentFormFieldValues(), shopContext.getFormFieldMappings()).forEach((x) => {
+                        formFields[x.name] = x.value;
+                    });
+                    mergeTemplates = shopContext.getMergeTemplates();
+                }
+                const params = {
+                    mergeTemplates: mergeTemplates,
+                    formFields: formFields,
+                    templateName: shopContext.templateNameOrSaveToken,
+                    usePublishedVersion: true,
+                    shopInfo: {
+                        basketId: await PrintessEditor.getOrGenerateBasketId(shopContext),
+                        userId: await PrintessEditor.getUserId(shopContext),
+                    }
+                };
+                const result = await editor.createSaveToken(printessSettings.shopToken, params);
+                if (result && result.saveToken) {
+                    shopContext.onAddToBasket(result.saveToken, result.thumbnailUrl);
+                }
+            },
+            createSaveToken: async (shopToken, params) => {
+                const response = await fetch('https://api.printess.com/production/savetoken/create', {
+                    method: 'POST',
+                    redirect: "follow",
+                    headers: {
+                        "Content-Type": 'application/json',
+                        "Authorization": `Bearer ${shopToken}`,
+                    },
+                    body: JSON.stringify(params)
+                });
+                if (!response.ok) {
+                    console.error("Unable to create save token: [" + response.status + "] " + response.statusText);
+                    return null;
+                }
+                return (await response.json());
+            },
             getAddToBasketForm(formSelector) {
                 const forms = document.querySelectorAll(formSelector);
                 const formsToConsider = [];
@@ -3676,7 +3760,7 @@ const initPrintessShopifyEditor = (printessSettings) => {
                             console.error(e);
                         }
                         if (!isSave) {
-                            editor.addNewItemToBasket(settings, saveToken, thumbnailUrl);
+                            editor.addNewItemToBasket(settings, saveToken, thumbnailUrl, context.disableCartEditing === true);
                         }
                         else {
                             editor.replaceBasketItem(settings, saveToken, thumbnailUrl);
@@ -4144,7 +4228,7 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     });
                 });
             },
-            addNewItemToBasket: (settings, saveToken, thumbnailUrl) => {
+            addNewItemToBasket: (settings, saveToken, thumbnailUrl, disableEditing) => {
                 if (settings && settings.legacyAddToBasket === true) {
                     const selectedOptions = typeof settings.basketItemId !== "undefined" && settings.basketItemId ? settings.basketItemOptions : editor.getCurrentProductOptionValues(settings.product);
                     const variantRelatedOptions = editor.getProductOptionValuesForVariants(selectedOptions, settings.product);
@@ -4194,6 +4278,12 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessProductType]", "printessProductTypeEdit" + settings.product.id, settings.productType || "");
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessTheme]", "printessThemeEdit" + settings.product.id, printessSettings.theme || "");
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessTheme]", "printessThemeEdit" + settings.product.id, printessSettings.theme || "");
+                if (disableEditing === true) {
+                    editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessDisableEditing]", "printessDisableEditing" + settings.product.id, "true");
+                }
+                else {
+                    editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessDisableEditing]", "printessDisableEditing" + settings.product.id, null);
+                }
                 if (settings.additionalLineItemProperties && settings.additionalLineItemProperties["formFieldsAsProperties"]) {
                     const fields = editor.parseFormFieldAsPropertyValue(settings.additionalLineItemProperties["formFieldsAsProperties"]);
                     fields.forEach((x, index) => {

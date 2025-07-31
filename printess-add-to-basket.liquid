@@ -208,7 +208,7 @@
       addedAdditionalProperties = true;
     {% endif %}
 
-    {% if printTemplateName = blank %}
+    {% if printTemplateName == blank %}
       {% if product.metafields.printess.printTemplateName != blank %}
         additionalProperties["printTemplate"] = {{ product.metafields.printess.printTemplateName | json }};
         addedAdditionalProperties = true;
