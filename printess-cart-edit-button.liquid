@@ -170,9 +170,11 @@
 </script>
 {% endif %}
 
+{% if item.properties._printessDisableEditing == blank %}
 <span style="margin-top: 20px;" onclick='showPrintessEditorFallback("{{ item.key | replace: "-", "_" | replace: ":", "_" }}", 0)' id="printessCustomizeButton{{ item.key | replace: "-", "_" | replace: ":", "_" }}" class="{{ classes }}">{{ label | escape }}</span>
 
   {% if duplicateAndPersonalizeText != blank %}
     <span style="margin-top: 20px;" onclick='showPrintessEditorFallback("{{ item.key | replace: "-", "_" | replace: ":", "_" }}", 0, true)' id="printessDuplicateButton{{ item.key | replace: "-", "_" | replace: ":", "_" }}" class="{{ classes }}">{{ duplicateAndPersonalizeText | escape }}</span>
   {% endif %}
+{% endif %}
 {%  endif %}

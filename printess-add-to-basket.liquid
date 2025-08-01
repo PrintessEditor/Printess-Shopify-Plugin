@@ -28,6 +28,8 @@
     - shopUserId: { String } The current logged in user id, must be unique over all shop users
     - autoImportUserImages: { Boolean } Autoimports all images that have been uploaded by the current user
     - printTemplateName: {String} The name of the Print Settings that should be used to produce this product
+    - hasDirectAddToBasketButton {Boolean} Add a second button that allows adding to basket without opening the editor
+    - directAddToBasketButtonLabel {String} The label for the second add to basket button
     Usage:
     {% render 'printess-add-to-basket',
       product: product,
@@ -54,7 +56,9 @@
       basketId: null,
       shopUserId: null,
       autoImportUserImages: false,
-      printTemplateName: ""
+      printTemplateName: "",
+      hasDirectAddToBasketButton: true,
+      directAddToBasketButtonLabel: "Add to basket"
     %}
 {% endcomment %}
 
@@ -117,7 +121,7 @@
 -%}
 
  <script id="printess_script_{{ product.id | json }}">
-  var showPrintessEditor{{ product.id | json }} = (saveToken = null, keepOriginalBasketItem = false) => {
+  var showPrintessEditor{{ product.id | json }} = (saveToken = null, keepOriginalBasketItem = false, directAddToBasket = false) => {
     const printessButton = window.document.getElementById("printessCustomizeButton{{ product.id | json }}");
 
     const printessTemplateName = {{ printessTemplateName | json }};
@@ -258,14 +262,23 @@
     }
 
   {% if showSplitterGridSizeButton != null %}settings["showSplitterGridSizeButton"] = {{showSplitterGridSizeButton | json}};{% endif %}
-
-    window["printessEditor" + product.id].show(settings);
+    if(directAddToBasket) {
+      window["printessEditor" + product.id].addToBasketWithoutPersonalization(settings);
+    } else {
+      window["printessEditor" + product.id].show(settings);
+    }
   }
 </script>
 
-<span onclick='showPrintessEditorFallback({{ product.id | json }}, 0, false)' id="printessCustomizeButton{{ product.id | json }}" class="{{ buttonClasses }}" style="display:none; justify-content: center;">
+<button type="button" onclick='showPrintessEditorFallback({{ product.id | json }}, 0, false)' id="printessCustomizeButton{{ product.id | json }}" class="{{ buttonClasses }}" style="display:none; justify-content: center;">
   {{ buttonLabel | escape }}
-</span>
+</button>
+
+{% if hasDirectAddToBasketButton == true or product.metafields.printess.hasDirectAddToBasketButton == true %}
+  <button type="button" onclick='showPrintessEditorFallback({{ product.id | json }}, 0, false, true)' id="printessCustomizeButton{{ product.id | json }}Direct" class="printess-direct-add-to-basket{{ buttonClasses }}" style="justify-content: center;">
+    {{ directAddToBasketButtonLabel | escape }}
+  </button>
+{% endif %}
 
 <script>
 document.addEventListener("DOMContentLoaded", function() {

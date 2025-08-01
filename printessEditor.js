@@ -2743,7 +2743,7 @@ class PrintessShopifyCart {
     }
 }
 
-const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketItem = false) => {
+const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketItem = false, addToBasketDirect = false) => {
     const showMethodName1 = "openPrintessEditor" + itemId;
     const showMethodName2 = "showPrintessEditor" + itemId;
     if (typeof window[showMethodName1] === "undefined" && typeof window[showMethodName2] === "undefined") {
@@ -2756,7 +2756,7 @@ const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketIte
             scriptTag.replaceWith(newTag);
             if (loopCount < 10) {
                 setTimeout(function () {
-                    showPrintessEditorFallback(itemId, ++loopCount, keepOriginalBasketItem);
+                    showPrintessEditorFallback(itemId, ++loopCount, keepOriginalBasketItem, addToBasketDirect);
                 }, 200);
             }
             else {
@@ -2767,9 +2767,9 @@ const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketIte
     }
     else {
         if (typeof window[showMethodName1] !== "undefined")
-            window[showMethodName1](keepOriginalBasketItem);
+            window[showMethodName1](keepOriginalBasketItem, addToBasketDirect);
         if (typeof window[showMethodName2] !== "undefined")
-            window[showMethodName2](null, keepOriginalBasketItem);
+            window[showMethodName2](null, keepOriginalBasketItem, addToBasketDirect);
     }
 };
 const initPrintessShopifyEditor = (printessSettings) => {
