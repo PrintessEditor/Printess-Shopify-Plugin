@@ -83,6 +83,12 @@
                 formFields = await PrintessShopifySlimUi._callbacks.getFormFieldValuesAsync(this, formFields);
                 mergeTemplates = await PrintessShopifySlimUi._callbacks.getMergeTemplatesAsync(this, this._product, []);
             }
+            if (this._urlParams && typeof this._urlParams.quantity !== "undefined" && this._urlParams.quantity > 0) {
+                const qtyCtrl = this.getUiNode("quantity");
+                if (qtyCtrl && typeof qtyCtrl.value !== "undefined") {
+                    qtyCtrl.value = this._urlParams.quantity.toString();
+                }
+            }
             this._state = await (typeof window["createSlimUi"] === "function" ? window["createSlimUi"] : window["PrintessSlimUi"].createSlimUi)({
                 previewContainer: document.createElement("div"),
                 uiContainer: variantContainer,
@@ -210,7 +216,7 @@
         const quantityString = urlParams.get("qty");
         const autoOpenString = (urlParams.get("pao") || "").toLowerCase().trim();
         const qty = quantityString ? parseInt(quantityString) : 1;
-        if (!isNaN(qty) && isFinite(qty) && qty < 0) {
+        if (!isNaN(qty) && isFinite(qty) && qty > 0) {
             ret.quantity = qty;
         }
         if (autoOpenString) {
@@ -842,7 +848,7 @@
                 ret.cssAddToBasketButtonSelector = ret.cssAddToBasketButtonSelector || ".btn.add-to-cart";
                 ret.cssVariantSwitchSelector = ret.cssVariantSwitchSelector || "[data-dynamic-variants-enabled]";
                 ret.cssPriceTextSelector = ret.cssPriceTextSelector || ".product__price";
-                ret.cssQuantityInputSelector = ret.cssQuantityInputSelector || '[name="quantity"]';
+                ret.cssQuantityInputSelector = ret.cssQuantityInputSelector || '[name="quantity"],[name="qty"]';
                 break;
             }
         }
@@ -856,7 +862,7 @@
         ret.cssProgressIndicatorSelector = ret.cssProgressIndicatorSelector || "slider-component ul li .loading-overlay__spinner,slider-component ul li .loading__spinner";
         ret.cssAddToBasketButtonSelector = ret.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"]';
         ret.cssPriceTextSelector = ret.cssPriceTextSelector || ".price__regular>span.price-item.price-item--regular";
-        ret.cssQuantityInputSelector = ret.cssQuantityInputSelector || '[name="quantity"]';
+        ret.cssQuantityInputSelector = ret.cssQuantityInputSelector || '[name="quantity"],[name="qty"]';
         return ret;
     }
     /** Initialization */
