@@ -30,6 +30,7 @@
     - printTemplateName: {String} The name of the Print Settings that should be used to produce this product
     - hasDirectAddToBasketButton {Boolean} Add a second button that allows adding to basket without opening the editor
     - directAddToBasketButtonLabel {String} The label for the second add to basket button
+    - formFieldsAsProperties {String} Comma seperated list of form field names whose values should be added to the basket property display
     Usage:
     {% render 'printess-add-to-basket',
       product: product,
@@ -58,7 +59,8 @@
       autoImportUserImages: false,
       printTemplateName: "",
       hasDirectAddToBasketButton: true,
-      directAddToBasketButtonLabel: "Add to basket"
+      directAddToBasketButtonLabel: "Add to basket",
+      formFieldsAsProperties: "formField1"
     %}
 {% endcomment %}
 
@@ -116,6 +118,14 @@
 
     if product.metafields.printess.tableQuantityFormField
       assign tableQuantityFormField = product.metafields.printess.tableQuantityFormField
+    endif
+
+    if product.metafields.printess.formFieldsAsProperties
+      if formFieldsAsProperties != blank
+        assign formFieldsAsProperties = formFieldsAsProperties | append: ',' | append: product.metafields.printess.formFieldsAsProperties
+      else
+        assign formFieldsAsProperties = product.metafields.printess.formFieldsAsProperties
+      endif
     endif
   endif
 -%}
@@ -219,6 +229,11 @@
       {% endif %}
     {% else %}
       additionalProperties["printTemplate"] = {{ printTemplateName | json }};
+      addedAdditionalProperties = true;
+    {% endif %}
+
+    {% if formFieldsAsProperties != blank %}
+      additionalProperties["formFieldsAsProperties"] = {{ formFieldsAsProperties | json }};
       addedAdditionalProperties = true;
     {% endif %}
 

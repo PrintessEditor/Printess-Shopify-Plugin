@@ -32,4 +32,16 @@ qty
   <button type="button" id="printessButton{{ item.key | replace: "-", "_" | replace: ":", "_" }}" class="printess-edit-button button" onclick='PrintessShopifySlimUiCart.openProductPage({{ item.properties._printessSaveToken | json }}, {{ item.url | json }}, {{ item.key | json }}, {{ item.quantity | json }}, {% if quantitySelector != blank %}{{ quantitySelector | json }}{%else%}""{%endif%}, {% if cartItemSelector != blank %}{{ cartItemSelector | json }}{%else%}""{%endif%});'>
     {% if buttonCaption != blank %}{{ buttonCaption | escape }}{%else%}Edit{%endif%}
   </button>
+
+  <script>
+    if(!window["printessCleanupBasket"]) {
+      window["printessCleanupBasket"] = function() {
+          PrintessShopifySlimUiCart.cleanupBasket();
+      };
+
+      document.addEventListener('DOMContentLoaded', function() {
+        window["printessCleanupBasket"]();
+      }, false);
+    }
+  </script>
 </div>

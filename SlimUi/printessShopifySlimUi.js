@@ -116,6 +116,22 @@
             }
         }
     }
+    static parseJsonHtmlDecode(json) {
+        try {
+            try {
+                return JSON.parse(json) || null;
+            }
+            catch {
+                var txt = document.createElement("textarea");
+                txt.innerHTML = json;
+                return JSON.parse(txt.value);
+            }
+        }
+        catch (e) {
+            console.error(e);
+            return null;
+        }
+    }
     async onBasketItemClick(designNowButton) {
         this.showFormsProgressIndicator(true);
         this.showImageProgressIndicator(true);
@@ -135,7 +151,7 @@
             }
             else {
                 if ((await PrintessShopifySlimUi._callbacks.addToBasketAsync(this, this._product, result.saveToken, result.thumbnailUrl, currentOptions, true)) === true) {
-                    this.onAddToBasket();
+                    this.onAddToBasket(null);
                 }
             }
         }
@@ -245,12 +261,22 @@
             idInput.value = variant.id.toString();
         }
     }
-    async onAddToBasket() {
+    async onAddToBasket(settings) {
         this.getUiNode("addToBasketButton")?.classList.add("printess-hidden");
         try {
             const response = await this._state.createSaveToken();
             PrintessShopifySlimUi.addOrSetBasketInput(this._productForm, "properties[_printessSaveToken]", response.saveToken);
             PrintessShopifySlimUi.addOrSetBasketInput(this._productForm, "properties[_printessThumbnail]", response.thumbnailUrl);
+            if (!settings) {
+                settings = {};
+            }
+            if (this._urlParams && this._urlParams.saveToken) {
+                if (!settings.originalSaveToken && this._urlParams && this._urlParams.saveToken) {
+                    settings.originalSaveToken = this._urlParams.saveToken;
+                }
+                settings.saveTokenToDelete = this._urlParams.saveToken;
+            }
+            PrintessShopifySlimUi.addOrSetBasketInput(this._productForm, "properties[_printessSlimUiSettings]", JSON.stringify(settings));
             this.updateVariantInput();
         }
         catch (e) {
@@ -277,7 +303,7 @@
         const { items } = json;
         return items.find(item => item.properties && item.properties._printessSaveToken ? item.properties && item.properties._printessSaveToken === saveToken : false);
     }
-    readQuantity() {
+    readQuantity(defaultValue = 1) {
         const quantityInput = this.getUiNode("quantity");
         if (quantityInput.value) {
             const iValue = parseInt(quantityInput.value);
@@ -285,7 +311,7 @@
                 return iValue;
             }
         }
-        return 1;
+        return defaultValue;
     }
     async addNewItemToBasket(saveToken, valuesToWrite, retries = 0) {
         const result = await fetch('/cart/add', {
@@ -354,11 +380,31 @@
             console.error("Could not find basket item for save token " + saveToken);
         }
         let basketItemProperties = { ...originalBasketItem.properties ? originalBasketItem.properties : {} };
+        if (!basketItemProperties["_printessSlimUiSettings"]) {
+            basketItemProperties["_printessSlimUiSettings"] = "{}";
+        }
+        let settings = PrintessShopifySlimUi.parseJsonHtmlDecode(basketItemProperties["_printessSlimUiSettings"]);
+        if (this._urlParams && this._urlParams.saveToken) {
+            if (!settings.originalSaveToken && this._urlParams && this._urlParams.saveToken) {
+                settings.originalSaveToken = this._urlParams.saveToken;
+            }
+            settings.saveTokenToDelete = this._urlParams.saveToken;
+        }
+        basketItemProperties["_printessSlimUiSettings"] = JSON.stringify(settings);
         basketItemProperties = {
             ...basketItemProperties,
             _printessSaveToken: saveToken,
             _printessThumbnail: thumbnailUrl
         };
+        let quantity = this.readQuantity(-1);
+        if (quantity < 0) {
+            if (this._urlParams && typeof this._urlParams.quantity !== "undefined" && this._urlParams.quantity > 0) {
+                quantity = this._urlParams.quantity;
+            }
+            else {
+                quantity = 1;
+            }
+        }
         const valuesToWrite = {
             id: selectedVariant.id,
             quantity: this.readQuantity(),
@@ -1448,5 +1494,51 @@ PrintessShopifySlimUi._callbacks = null; class PrintessShopifySlimUiCart {
         const urlParams = `printesssavetoken=${encodeURIComponent(saveToken)}&basketkey=${encodeURIComponent(basketItemKey)}&qty=${quantity}`;
         const url = productUrl + (productUrl.indexOf("?") > 0 ? "&" : "?") + urlParams;
         window.location.replace(url);
+    }
+    static async cleanupBasket() {
+        let reloadPage = false;
+        //Download all basket items
+        const currentCart = await fetch('/cart.js', {
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        });
+        if (!currentCart || !currentCart.ok) {
+            console.error("Unable to read basket items");
+            return;
+        }
+        //Filter for printess itmes
+        const cartItems = (await currentCart.json()).items.filter(item => item.properties && item.properties._printessSaveToken && item.properties._printessSlimUiSettings ? item.properties && item.properties._printessSaveToken : false);
+        const saveTokensToDelete = {};
+        cartItems.forEach((x) => {
+            if (x.properties && x.properties._printessSlimUiSettings) {
+                const settings = typeof x.properties._printessSlimUiSettings === "string" ? PrintessShopifySlimUi.parseJsonHtmlDecode(x.properties._printessSlimUiSettings) : {};
+                if (settings.saveTokenToDelete) {
+                    saveTokensToDelete[settings.saveTokenToDelete] = true;
+                }
+            }
+        });
+        //Check each item if it needs to be deleted
+        for (let i = 0; i < cartItems.length; ++i) {
+            if (cartItems[i].properties && cartItems[i].properties._printessSaveToken && saveTokensToDelete[cartItems[i].properties._printessSaveToken]) {
+                reloadPage = true;
+                const result = await fetch('/cart/change.js', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        id: cartItems[i].key,
+                        quantity: 0
+                    })
+                });
+                if (!result.ok) {
+                    console.error("Unable to delete basket item " + cartItems[i].properties._printessSaveToken + "[" + result.status.toString() + "] " + result.statusText);
+                }
+            }
+        }
+        if (reloadPage) {
+            window.location.replace('/cart');
+        }
     }
 }
