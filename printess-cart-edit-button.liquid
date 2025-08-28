@@ -27,6 +27,7 @@
   - basketId: { String } The current session id (Must be unique between different shop users, is auto generated if not provided)
   - shopUserId: { String } The current logged in user id, must be unique over all shop users
   - autoImportUserImages: { Boolean } Autoimports all images that have been uploaded by the current user
+  - graphQlLanguage: { String } The language that should be used to get product option names and values
   Usage:
   {% render 'printess-cart-edit-button',
     item: item,
@@ -49,7 +50,8 @@
     forceCartItemCleanup: false,
     quantitySelector: "",
     cartItemParentSelector: "",
-    circulationTableRecordCountText: "{NUMBER} Records"
+    circulationTableRecordCountText: "{NUMBER} Records",
+    graphQlLanguage: "auto"
   %}
 {% endcomment %}
 
@@ -69,7 +71,8 @@
                                                                                                                 "graphQlToken": {{graphQlToken | json}} || "",
                                                                                                                 "basketId": {% if basketId != blank %}{{ basketId | json }}{% else %}null{% endif %},
                                                                                                                 "shopUserId": {% if shopUserId != blank %}{{ shopUserId | json }}{% else %}null{% endif %},
-                                                                                                                "autoImportUserImages": {{ autoImportUserImages | json }} === true
+                                                                                                                "autoImportUserImages": {{ autoImportUserImages | json }} === true,
+                                                                                                                "graphQlLanguage": {% if graphQlLanguage != blank %} {% if graphQlLanguage == 'auto' %}{{ localization.language.iso_code | json }}{%else%}{{ graphQlLanguage | json}}{%endif%}{% else %}null{%endif%}
                                                                                                               });
     }
 

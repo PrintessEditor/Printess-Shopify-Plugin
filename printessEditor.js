@@ -1182,8 +1182,10 @@ class PrintessEditor {
 }
 
 class PrintessShopifyGraphQlApi {
-    constructor(graphQlToken) {
+    constructor(graphQlToken, language = null) {
+        this.language = null;
         this.graphQlToken = graphQlToken;
+        this.language = language ? language.toUpperCase() : null;
     }
     static strEscapeRegExp(str) {
         return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1230,6 +1232,17 @@ class PrintessShopifyGraphQlApi {
         console.log(json);
         return this.getSubObjectByPath(json.data, resultVarName);
     }
+    applyLanguageSettings(query) {
+        if (this.language) {
+            query.variables.language = this.language;
+            query.query = PrintessShopifyGraphQlApi.strReplaceAll(query.query, "{LANG_PARAM}", ", $language: LanguageCode!");
+            query.query = PrintessShopifyGraphQlApi.strReplaceAll(query.query, "{IN_CONTEXT_PARAM}", " @inContext(language: $language)");
+        }
+        else {
+            query.query = PrintessShopifyGraphQlApi.strReplaceAll(query.query, "{LANG_PARAM}", "");
+            query.query = PrintessShopifyGraphQlApi.strReplaceAll(query.query, "{IN_CONTEXT_PARAM}", "");
+        }
+    }
     async getProductOptions(productId) {
         const that = this;
         const query = {
@@ -1237,7 +1250,7 @@ class PrintessShopifyGraphQlApi {
                 productId: "gid://shopify/Product/" + productId.toString()
             },
             query: `
-                query GetProductsById($productId: ID!) {
+                query GetProductsById($productId: ID!{LANG_PARAM}){IN_CONTEXT_PARAM} {
                     product(id: $productId) {
                             options(first: 4) {
                                 name,
@@ -1250,6 +1263,7 @@ class PrintessShopifyGraphQlApi {
                     }
                 }`
         };
+        this.applyLanguageSettings(query);
         let position = 1;
         const result = (await this.sendGQl(query, "product.options")).map((x) => {
             return {
@@ -1370,7 +1384,7 @@ class PrintessShopifyGraphQlApi {
         variantFilter = "selectedOptions: [" + variantFilter + "]";
         const query = {
             query: `
-                query GetProductsById({METHOD_ARGUMENTS}) {
+                query GetProductsById({METHOD_ARGUMENTS}{LANG_PARAM}){IN_CONTEXT_PARAM} {
                     product(id: $productId) {
                         {DEFAULT_VARIANT}
                         variantBySelectedOptions({VARIANT_FILTER}){
@@ -1394,6 +1408,7 @@ class PrintessShopifyGraphQlApi {
             variables: queryVariables
         };
         query.query = query.query.replace("{METHOD_ARGUMENTS}", methodArguments).replace("{DEFAULT_VARIANT}", returnDefault ? defaulVariantQuery : "").replace("{VARIANT_FILTER}", variantFilter);
+        this.applyLanguageSettings(query);
         const variantResponse = await this.sendGQl(query, "product");
         if (variantResponse) {
             const mapVariant = (variant) => {
@@ -1424,7 +1439,7 @@ class PrintessShopifyGraphQlApi {
         queryVariables["variantId"] = "gid://shopify/ProductVariant/" + id.toString();
         const query = {
             query: `
-                query GetProductVariantById($variantId: ID!) {
+                query GetProductVariantById($variantId: ID!{LANG_PARAM}){IN_CONTEXT_PARAM} {
                     productVariant(id: $variantId) {
                         title,
                         id,
@@ -1444,6 +1459,7 @@ class PrintessShopifyGraphQlApi {
                 }`,
             variables: queryVariables
         };
+        this.applyLanguageSettings(query);
         const variantResponse = await this.sendGQl(query, "productVariant");
         if (variantResponse) {
             const mapVariant = (variant) => {
@@ -1469,7 +1485,7 @@ class PrintessShopifyGraphQlApi {
     getProductVariantsInternal(productId, cursor = null) {
         const query = {
             query: `
-                query GetProductsById($productId: ID!{CURSOR1}) {
+                query GetProductsById($productId: ID!{CURSOR1}{LANG_PARAM}){IN_CONTEXT_PARAM} {
                     product(id: $productId) {
                         variants(first: 50{CURSOR2}) {
                             edges {
@@ -1494,6 +1510,7 @@ class PrintessShopifyGraphQlApi {
             }
         };
         query.query = query.query.replace("{CURSOR1}", cursor ? ", $cursor: String" : "").replace("{CURSOR2}", cursor ? ", after: $cursor" : "");
+        this.applyLanguageSettings(query);
         return this.sendGQl(query, "product.variants");
     }
     async getProductVariants(productId) {
@@ -1537,10 +1554,9 @@ class PrintessShopifyGraphQlApi {
 
 class PrintessShopifyCart {
     constructor(printessSettings) {
-        this.onFirstPageImageToken = "";
         this.formFieldAsProperties = {};
         this.settings = printessSettings;
-        this.shopifyApi = new PrintessShopifyGraphQlApi(printessSettings.graphQlToken);
+        this.shopifyApi = new PrintessShopifyGraphQlApi(printessSettings.graphQlToken, printessSettings.graphQlLanguage);
     }
     async initialize(productId) {
         if (!this.product || this.product.id !== productId) {
@@ -2057,13 +2073,13 @@ class PrintessShopifyCart {
                 if (that.basketItemVariantOptions) {
                     for (const itemName in that.basketItemVariantOptions) {
                         if (that.basketItemVariantOptions.hasOwnProperty(itemName)) {
-                            if (itemName === formField) {
-                                optionFound = true;
-                                that.basketItemVariantOptions[itemName] = value;
-                            }
-                            else if (itemName === formFieldLabel) {
+                            if (itemName === formFieldLabel) {
                                 optionFound = true;
                                 that.basketItemVariantOptions[itemName] = valueLabel;
+                            }
+                            else if (itemName === formField) {
+                                optionFound = true;
+                                that.basketItemVariantOptions[itemName] = value;
                             }
                         }
                     }
@@ -2071,13 +2087,13 @@ class PrintessShopifyCart {
                 if (that.basketItemOptions) {
                     for (const itemName in that.basketItemOptions) {
                         if (that.basketItemOptions.hasOwnProperty(itemName)) {
-                            if (itemName === formField) {
-                                optionFound = true;
-                                that.basketItemOptions[itemName] = value;
-                            }
-                            else if (itemName === formFieldLabel) {
+                            if (itemName === formFieldLabel) {
                                 optionFound = true;
                                 that.basketItemOptions[itemName] = valueLabel;
+                            }
+                            else if (itemName === formField) {
+                                optionFound = true;
+                                that.basketItemOptions[itemName] = value;
                             }
                         }
                     }
@@ -2246,72 +2262,38 @@ class PrintessShopifyCart {
                 }
                 return ret;
             },
-            onRenderFirstPageImageAsync: async (thumbnailUrl) => {
-                if (context.cameFromSave && that.onFirstPageImageToken) {
-                    try {
-                        await context.onSaveAsync(that.onFirstPageImageToken, thumbnailUrl, true);
-                    }
-                    catch (e) {
-                        console.error(e);
-                    }
-                    that.onFirstPageImageToken = "";
-                    context.cameFromSave = false;
-                }
-            },
-            onSaveAsync: async (saveToken, thumbnailUrl, cameFromFirstpageImage = false) => {
+            onSaveAsync: async (saveToken, thumbnailUrl) => {
                 context.cameFromSave = true;
-                if (!cameFromFirstpageImage && typeof context.renderFirstPageImageAsync === "function") {
-                    let maxThumbnailWidth = 400;
-                    let maxThumbnailHeight = 400;
-                    if (showSettings.additionalAttachParams) {
-                        if (typeof showSettings.additionalAttachParams.basketThumbnailMaxWidth !== "undefined" && showSettings.additionalAttachParams.basketThumbnailMaxWidth) {
-                            const intValue = parseInt("" + showSettings.additionalAttachParams.basketThumbnailMaxWidth);
-                            if (!isNaN(intValue) && isFinite(intValue) && intValue > -1) {
-                                maxThumbnailWidth = intValue;
-                            }
-                        }
-                        if (typeof showSettings.additionalAttachParams.basketThumbnailMaxHeight !== "undefined" && showSettings.additionalAttachParams.basketThumbnailMaxHeight) {
-                            const intValue = parseInt("" + showSettings.additionalAttachParams.basketThumbnailMaxHeight);
-                            if (!isNaN(intValue) && isFinite(intValue) && intValue > -1) {
-                                maxThumbnailHeight = intValue;
-                            }
-                        }
+                const callbackParams = {
+                    lastSaveToken: that.lastSaveToken,
+                    initialSaveToken: that.initialSaveToken,
+                    originalSaveToken: that.originalSaveToken,
+                    selectedVariant: await that.getVariantForFormFields(),
+                    formFieldValues: {
+                        ...that.basketItemOptions,
+                        ...that.basketItemVariantOptions
+                    },
+                    basketItemId: that.cartItemConfig.basketItemId || null,
+                    product: that.product
+                };
+                try {
+                    if (typeof showSettings.onSave === "function") {
+                        showSettings.onSave(saveToken, thumbnailUrl, callbackParams);
                     }
-                    that.onFirstPageImageToken = saveToken;
-                    await context.renderFirstPageImageAsync(maxThumbnailWidth, maxThumbnailHeight);
                 }
-                else {
-                    const callbackParams = {
-                        lastSaveToken: that.lastSaveToken,
-                        initialSaveToken: that.initialSaveToken,
-                        originalSaveToken: that.originalSaveToken,
-                        selectedVariant: await that.getVariantForFormFields(),
-                        formFieldValues: {
-                            ...that.basketItemOptions,
-                            ...that.basketItemVariantOptions
-                        },
-                        basketItemId: that.cartItemConfig.basketItemId || null,
-                        product: that.product
-                    };
-                    try {
-                        if (typeof showSettings.onSave === "function") {
-                            showSettings.onSave(saveToken, thumbnailUrl, callbackParams);
-                        }
-                    }
-                    catch (e) {
-                        console.error(e);
-                    }
-                    const conf = PrintessEditor && PrintessEditor.getGlobalShopSettings ? PrintessEditor.getGlobalShopSettings() : {};
-                    try {
-                        if (conf && typeof conf.onSave === "function") {
-                            conf.onSave(saveToken, thumbnailUrl, callbackParams);
-                        }
-                    }
-                    catch (e) {
-                        console.error(e);
-                    }
-                    that.lastSaveToken = saveToken;
+                catch (e) {
+                    console.error(e);
                 }
+                const conf = PrintessEditor && PrintessEditor.getGlobalShopSettings ? PrintessEditor.getGlobalShopSettings() : {};
+                try {
+                    if (conf && typeof conf.onSave === "function") {
+                        conf.onSave(saveToken, thumbnailUrl, callbackParams);
+                    }
+                }
+                catch (e) {
+                    console.error(e);
+                }
+                that.lastSaveToken = saveToken;
             },
             onLoadAsync: async (currentTemplateNameOrSaveToken) => {
                 const callbackParams = {
@@ -2679,6 +2661,9 @@ class PrintessShopifyCart {
         this.initTableQuantityVariants(showSettings);
         if (showSettings.theme) {
             this.cartItemConfig.theme = showSettings.theme;
+            if (!this.settings.theme) {
+                this.settings.theme = showSettings.theme;
+            }
         }
         const context = this.createShopContext(showSettings);
         if (this.cartItemConfig.additionalSettings && this.cartItemConfig.additionalSettings["originalSaveToken"]) {
@@ -2841,7 +2826,6 @@ const initPrintessShopifyEditor = (printessSettings) => {
             lastSaveToken: "",
             initialSaveToken: "",
             originalSaveToken: "",
-            onRenderFirstPageImageToken: "",
             ignoreDataOptionIndex: printessSettings && typeof printessSettings.ignoreDataOptionIndex !== "undefined" && printessSettings.ignoreDataOptionIndex === true, //Some themes write data-option-position or data-option-index as option index some as value position inside the option
             formFieldAsProperties: {},
             debounce: function (func, timeout = 300) {
@@ -3945,54 +3929,36 @@ const initPrintessShopifyEditor = (printessSettings) => {
                         }
                         return ret;
                     },
-                    onRenderFirstPageImage: (thumbnailUrl) => {
-                        if (context.cameFromSave && editor.onRenderFirstPageImageToken) {
-                            try {
-                                context.onSave(editor.onRenderFirstPageImageToken, thumbnailUrl, true);
-                            }
-                            catch (e) {
-                                console.error(e);
-                            }
-                            context.cameFromSave = false;
-                            editor.onRenderFirstPageImageToken = "";
-                        }
-                    },
-                    onSave: (saveToken, thumbnailUrl, cameFromFirstpageImage = false) => {
+                    onSave: (saveToken, thumbnailUrl) => {
                         context.cameFromSave = true;
-                        if (!cameFromFirstpageImage) {
-                            editor.onRenderFirstPageImageToken = saveToken;
-                            editor.postMessage("renderFirstPageImage", null);
+                        const currentProductValues = typeof settings.basketItemId !== "undefined" && settings.basketItemId ? settings.basketItemOptions : editor.getCurrentProductOptionValues(settings.product);
+                        const callbackParams = {
+                            lastSaveToken: editor.lastSaveToken,
+                            initialSaveToken: editor.initialSaveToken,
+                            originalSaveToken: editor.originalSaveToken,
+                            selectedVariant: editor.getVariantByProductOptions(currentProductValues, settings.product, true),
+                            formFieldValues: currentProductValues,
+                            basketItemId: settings.basketItemId || null,
+                            product: settings.product
+                        };
+                        try {
+                            if (typeof settings.onSave === "function") {
+                                settings.onSave(saveToken, thumbnailUrl, callbackParams);
+                            }
                         }
-                        else {
-                            const currentProductValues = typeof settings.basketItemId !== "undefined" && settings.basketItemId ? settings.basketItemOptions : editor.getCurrentProductOptionValues(settings.product);
-                            const callbackParams = {
-                                lastSaveToken: editor.lastSaveToken,
-                                initialSaveToken: editor.initialSaveToken,
-                                originalSaveToken: editor.originalSaveToken,
-                                selectedVariant: editor.getVariantByProductOptions(currentProductValues, settings.product, true),
-                                formFieldValues: currentProductValues,
-                                basketItemId: settings.basketItemId || null,
-                                product: settings.product
-                            };
-                            try {
-                                if (typeof settings.onSave === "function") {
-                                    settings.onSave(saveToken, thumbnailUrl, callbackParams);
-                                }
-                            }
-                            catch (e) {
-                                console.error(e);
-                            }
-                            const conf = PrintessEditor && PrintessEditor.getGlobalShopSettings ? PrintessEditor.getGlobalShopSettings() : {};
-                            try {
-                                if (conf && typeof conf.onSave === "function") {
-                                    conf.onSave(saveToken, thumbnailUrl, callbackParams);
-                                }
-                            }
-                            catch (e) {
-                                console.error(e);
-                            }
-                            editor.lastSaveToken = saveToken;
+                        catch (e) {
+                            console.error(e);
                         }
+                        const conf = PrintessEditor && PrintessEditor.getGlobalShopSettings ? PrintessEditor.getGlobalShopSettings() : {};
+                        try {
+                            if (conf && typeof conf.onSave === "function") {
+                                conf.onSave(saveToken, thumbnailUrl, callbackParams);
+                            }
+                        }
+                        catch (e) {
+                            console.error(e);
+                        }
+                        editor.lastSaveToken = saveToken;
                     },
                     onLoad: (currentTemplateNameOrSaveToken, params) => {
                         const currentProductValues = typeof settings.basketItemId !== "undefined" && settings.basketItemId ? settings.basketItemOptions : editor.getCurrentProductOptionValues(settings.product);
@@ -4290,7 +4256,7 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     const variantRelatedOptions = editor.getProductOptionValuesForVariants(selectedOptions, settings.product);
                     const selectedVariant = editor.getVariantByProductOptions(variantRelatedOptions, settings.product, true);
                     let basketItemProperties = settings.basketItemOptions ? Object.assign({}, settings.basketItemOptions) : {};
-                    basketItemProperties = Object.assign(Object.assign({}, basketItemProperties), { _printessSaveToken: saveToken, _printessThumbnail: thumbnailUrl, _printessProductDefinitionId: "" + settings.productDefinitionId, _printessOutputType: "" + settings.outputFormat || "pdf", _printessDpi: "" + settings.outputDpi || "300" });
+                    basketItemProperties = Object.assign(Object.assign({}, basketItemProperties), { _printessSaveToken: saveToken, _printessThumbnail: thumbnailUrl, _printessProductDefinitionId: "" + settings.productDefinitionId, _printessOutputType: "" + settings.outputFormat || "pdf", _printessDpi: "" + settings.outputDpi || "300", _printessTheme: printessSettings.theme });
                     if (settings.printQuantityOption && typeof selectedOptions[settings.printQuantityOption] !== "undefined") {
                         const quantity = PrintessEditor.extractNumber(selectedOptions[settings.printQuantityOption]);
                         if (!isNaN(quantity) && isFinite(quantity)) {
@@ -4332,7 +4298,6 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessDpi]", "printessDpiEdit" + settings.product.id, "" + settings.outputDpi || "300");
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessOptionValueMappings]", "printessOptionValueMappingsEdit" + settings.product.id, "" + settings.optionValueMappings || "");
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessProductType]", "printessProductTypeEdit" + settings.product.id, settings.productType || "");
-                editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessTheme]", "printessThemeEdit" + settings.product.id, printessSettings.theme || "");
                 editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessTheme]", "printessThemeEdit" + settings.product.id, printessSettings.theme || "");
                 if (disableEditing === true) {
                     editor.addOrRemoveTextField(editor.productFormSelector, "properties[_printessDisableEditing]", "printessDisableEditing" + settings.product.id, "true");

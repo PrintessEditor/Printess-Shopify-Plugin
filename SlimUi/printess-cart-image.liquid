@@ -12,36 +12,157 @@
 
 {% endcomment %}
 
-<!--
-printesssavetoken
-basketkey
-qty
- -->
+{% if item.properties._printessThumbnail != blank %}
+    <div class="cart-item__image-container gradient global-media-settings printess-cart-image-wrapper {% if wrapperClasses != blank %}{{ wrapperClasses }}{% else %}{% endif %}">
+      <img
+        src="{{ item.properties._printessThumbnail }}"
+        class="cart-item__image"
+        alt="{{ item.image.alt | escape }}"
+        loading="lazy"
+        width="{{ width }}"
+        onclick='PrintessShopifySlimUiCart.openProductPage({{ item.properties._printessSaveToken | json }}, {{ item.url | json }}, {{ item.key | json }}, {{ item.quantity | json }}, {% if quantitySelector != blank %}{{ quantitySelector | json }}{%else%}""{%endif%}, {% if cartItemSelector != blank %}{{ cartItemSelector | json }}{%else%}""{%endif%});'
+      >
 
-<div class="cart-item__image-container gradient global-media-settings printess-cart-image-wrapper {% if wrapperClasses != blank %}{{ wrapperClasses }}{% else %}{% endif %}">
-  {% if item.properties._printessThumbnail != blank %}
-    <img
-      src="{{ item.properties._printessThumbnail }}"
-      class="cart-item__image"
-      alt="{{ item.image.alt | escape }}"
-      loading="lazy"
-      width="{{ width }}"
-      onclick='PrintessShopifySlimUiCart.openProductPage({{ item.properties._printessSaveToken | json }}, {{ item.url | json }}, {{ item.key | json }}, {{ item.quantity | json }}, {% if quantitySelector != blank %}{{ quantitySelector | json }}{%else%}""{%endif%}, {% if cartItemSelector != blank %}{{ cartItemSelector | json }}{%else%}""{%endif%});'
-    >
-  {% endif %}
-  <button type="button" id="printessButton{{ item.key | replace: "-", "_" | replace: ":", "_" }}" class="printess-edit-button button" onclick='PrintessShopifySlimUiCart.openProductPage({{ item.properties._printessSaveToken | json }}, {{ item.url | json }}, {{ item.key | json }}, {{ item.quantity | json }}, {% if quantitySelector != blank %}{{ quantitySelector | json }}{%else%}""{%endif%}, {% if cartItemSelector != blank %}{{ cartItemSelector | json }}{%else%}""{%endif%});'>
-    {% if buttonCaption != blank %}{{ buttonCaption | escape }}{%else%}Edit{%endif%}
-  </button>
+      <button type="button" id="{% if item.properties._printessSlimUiSettings != blank %}printessButton{% else %}printessCustomizeButton{% endif %}{{ item.key | replace: "-", "_" | replace: ":", "_" }}" class="printess-edit-button button" onclick={% if item.properties._printessSlimUiSettings != blank %}'PrintessShopifySlimUiCart.openProductPage({{ item.properties._printessSaveToken | json }}, {{ item.url | json }}, {{ item.key | json }}, {{ item.quantity | json }}, {% if quantitySelector != blank %}{{ quantitySelector | json }}{%else%}""{%endif%}, {% if cartItemSelector != blank %}{{ cartItemSelector | json }}{%else%}""{%endif%});'{% else %}'showPrintessEditorFallback("{{ item.key | replace: "-", "_" | replace: ":", "_" }}", 0)'{% endif %}>
+        {% if buttonCaption != blank %}{{ buttonCaption | escape }}{%else%}Edit{%endif%}
+      </button>
 
-  <script>
-    if(!window["printessCleanupBasket"]) {
-      window["printessCleanupBasket"] = function() {
-          PrintessShopifySlimUiCart.cleanupBasket();
+      <script>
+        if(!window["printessCleanupBasket"]) {
+          window["printessCleanupBasket"] = function() {
+              PrintessShopifySlimUiCart.cleanupBasket();
+          };
+
+          document.addEventListener('DOMContentLoaded', function() {
+            window["printessCleanupBasket"]();
+          }, false);
+        }
+      </script>
+  {% if item.properties._printessSlimUiSettings == blank %}
+    {% if duplicateAndPersonalizeText != blank %}
+      <button type="button" style="margin-top: 20px;" onclick='showPrintessEditorFallback("{{ item.key | replace: "-", "_" | replace: ":", "_" }}", 0, true)' id="printessDuplicateButton{{ item.key | replace: "-", "_" | replace: ":", "_" }}" class="printess-duplicate-button button">{{ duplicateAndPersonalizeText | escape }}</button>
+    {% endif %}
+
+    <script script id="printess_script_{{ item.key | replace: "-", "_" | replace: ":", "_" }}">
+      if(!window["getPrintessEditor"]) {
+        window["getPrintessEditor"] = function() {
+          if(!window["getPrintessEditor"].editor) {
+            window["getPrintessEditor"].editor = new PrintessShopifyCart({ displayProductName: !({{showProductName | json}} === false),
+                                                                          shopToken: "{{ shopToken }}",
+                                                                          "startupLogoUrl": "{{ startupLogoUrl }}",
+                                                                          "showStartupAnimation": {{ showStartupAnimation }},
+                                                                          "hidePricesInEditor": {{ hidePricesInEditor }},
+                                                                          "shopMoneyFormat": "{{ shop.money_format }}",
+                                                                          "editorVersion": {{ editorVersion | json }},
+                                                                          "showAlertOnTabClose": {{showAlertOnTabClose | json}} === true,
+                                                                          "startupBackgroundColor": "{{startupBackgroundColor}}" || "#000000",
+                                                                          "graphQlToken": {{graphQlToken | json}} || "",
+                                                                          "basketId": {% if basketId != blank %}{{ basketId | json }}{% else %}null{% endif %},
+                                                                          "shopUserId": {% if shopUserId != blank %}{{ shopUserId | json }}{% else %}null{% endif %},
+                                                                          "autoImportUserImages": {{ autoImportUserImages | json }} === true
+                                                                        });
+            }
+
+            return window["getPrintessEditor"].editor;
+        };
+      }
+
+  function openPrintessEditor{{ item.key | replace: "-", "_" | replace: ":", "_" }}(keepOriginalBasketItem = false) {
+    const basketItem = {{ item | json }};
+    const basketItemProperties = {{item.properties | json}};
+
+    if(basketItemProperties) {
+      basketItem.properties = {};
+      basketItemProperties.forEach((prop) => {
+        if(prop.length > 1) {
+          basketItem.properties[prop[0]] = prop[1];
+        } else {
+          basketItem.properties[prop[0]] = "";
+        }
+      });
+    }
+
+    if(basketItem.options_with_values) {
+      basketItem.options_with_values.forEach((x) => {
+        basketItem.properties[x.name] = x.value;
+      });
+    }
+
+    const editor = getPrintessEditor();
+
+    if(!editor) {
+      return;
+    }
+
+    let attachParams = null;
+
+    try {attachParams = JSON.parse({{ additionalAttachParams | json }});}catch(e){}
+
+    const settings = {
+      basketItemId: {{ item.key | json }},
+      basketItemOptions: basketItem.properties,
+      productId: basketItem.product_id,
+      quantity: basketItem.quantity,
+      legalText: {% if legalText != blank %}{{ legalText | json }}{% else %}""{% endif %},
+      theme: {% if theme != blank %}"{{ theme }}"{% else %}""{%endif%},
+      additionalAttachParams: attachParams,
+      keepOriginalBasketItem: keepOriginalBasketItem,
+      displayProductName: !({{showProductName | json}} === false),
+      /*,onAddToBasket: function(saveToken, thumbnailUrl) {
+
+        },
+
+        onSave: function(saveToken, thumbnailUrl) {
+
+      }*/
+    };
+
+    {% if showSplitterGridSizeButton != null %}settings["showSplitterGridSizeButton"] = {{showSplitterGridSizeButton | json}};{% endif %}
+
+    editor.show(settings);
+  }
+
+  setTimeout(function() {
+    const properties = {};
+    const basketItemProperties = {{item.properties | json}};
+
+    if(basketItemProperties) {
+      basketItemProperties.forEach((prop) => {
+        if(prop.length > 1) {
+          properties[prop[0]] = prop[1];
+        } else {
+          properties[prop[0]] = "";
+        }
+      });
+    }
+
+    PrintessShopifyCart.initCirculationCartItem({{ cartItemParentSelector | json }}, {{ quantitySelector | json }}, {{ item.key | replace: "-", "_" | replace: ":", "_"  | json }}, properties, {{ circulationTableRecordCountText | json }});
+  }, 10);
+
+      const initCleanup{{ item.key | replace: "-", "_" | replace: ":", "_" }} = function (retries = 0) {
+        if(typeof PrintessShopifyCart !== "undefined") {
+          PrintessShopifyCart.deleteUndeletedBasketItem().then(() => {
+
+          });
+        } else {
+          if(retries < 20)
+            setTimeout(function() {
+              initCleanup{{ item.key | replace: "-", "_" | replace: ":", "_" }}(retries + 1);
+            }, 100);
+        }
       };
 
-      document.addEventListener('DOMContentLoaded', function() {
-        window["printessCleanupBasket"]();
-      }, false);
-    }
-  </script>
-</div>
+      addEventListener("DOMContentLoaded", function() {
+        initCleanup{{ item.key | replace: "-", "_" | replace: ":", "_" }}();
+      });
+
+
+    </script>
+  {% endif %}
+    </div>
+
+<!--
+
+-->
+
+{% endif %}

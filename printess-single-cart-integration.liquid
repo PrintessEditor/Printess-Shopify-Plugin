@@ -1,7 +1,7 @@
 {% comment %}
   Renders the printess printess integration code for non single item implementations
   Version 2.6
-  
+
   Accepts:
   - shopToken: {String} Your printess shop token.
   - startupLogoUrl: {String} Url for the startup logo of the editor that should be displayed on load (requires premium account),
@@ -63,16 +63,7 @@
         window["printessShowEditorForItem"] = function(basketItem) {
             const basketItemProperties = basketItem.properties ? JSON.parse(JSON.stringify(basketItem.properties)) : {};
 
-            if(basketItemProperties) {
-                basketItem.properties = {};
-                basketItemProperties.forEach((prop) => {
-                    if(prop.length > 1) {
-                        basketItem.properties[prop[0]] = prop[1];
-                    } else {
-                        basketItem.properties[prop[0]] = "";
-                    }
-                });
-            }
+
 
             if(basketItem.options_with_values) {
                 basketItem.options_with_values.forEach((x) => {
@@ -89,21 +80,30 @@
             let attachParams = null;
 
             try {attachParams = JSON.parse({{ additionalAttachParams | json }});}catch(e){}
-    
+
             const settings = {
                 basketItemId: basketItem.key,
                 basketItemOptions: basketItem.properties,
                 productId: basketItem.product_id,
                 quantity: basketItem.quantity,
                 legalText: {% if legalText != blank %}{{ legalText | json }}{% else %}""{% endif %},
-                theme: {% if theme != blank %}"{{ theme }}"{% else %}""{%endif%},
+                theme: {% if theme != blank %}{{ theme | json  }}{% else %}""{% endif %},
                 additionalAttachParams: attachParams,
+                mergeTemplates: {{ printessMergeTemplates | json }},
                 displayProductName: !({{showProductName | json}} === false),
             };
 
-            {% if showSplitterGridSizeButton != null %}settings["showSplitterGridSizeButton"] = {{showSplitterGridSizeButton | json}};{% endif %}
-    
             editor.show(settings);
         };
+    }
+
+    if(!window["printessCleanupBasket"]) {
+        window["printessCleanupBasket"] = function() {
+            PrintessShopifyCart.deleteUndeletedBasketItem();
+        };
+
+        document.addEventListener('DOMContentLoaded', function() {
+            window["printessCleanupBasket"]();
+      }, false);
     }
 </script>
