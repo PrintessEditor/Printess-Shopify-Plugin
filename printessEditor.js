@@ -3024,7 +3024,7 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     }
                 }
                 if (printessSettings.useVariantIdField === true) {
-                    const variantIdCtrl = document.querySelector('input[name="variant_id"],select[name="variant_id"]');
+                    const variantIdCtrl = document.querySelector('input[name="variant_id"],select[name="variant_id"],input[name="id"],select[name="id"]');
                     if (variantIdCtrl && variantIdCtrl.value) {
                         ret = {
                             ...ret,
@@ -3306,7 +3306,7 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     });
                 }
                 if (printessSettings.useVariantIdField === true) {
-                    const variantIdCtrl = document.querySelector('input[name="variant_id"],select[name="variant_id"]');
+                    const variantIdCtrl = document.querySelector('input[name="variant_id"],select[name="variant_id"],input[name="id"],select[name="id"]');
                     if (variantIdCtrl && variantIdCtrl.value) {
                         const values = editor.getProductOptionValuesByVariantId(parseInt(variantIdCtrl.value), product);
                         if (typeof values[formField] !== "undefined" || typeof values[formFieldLabel] === "undefined") {
