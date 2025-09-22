@@ -507,19 +507,21 @@ class PrintessEditor {
             catch (e) {
                 console.error(e);
             }
-            const iframe = document.getElementById("printess");
-            if (iframe && !context.hidePricesInEditor) {
-                setTimeout(() => {
-                    iframe.contentWindow.postMessage({
-                        cmd: "refreshPriceDisplay",
-                        priceDisplay: priceInfo
-                    }, "*");
-                }, 0);
-            }
-            //BcUI
-            const component = this.getPrintessComponent();
-            if (component && component.editor) {
-                component.editor.ui.refreshPriceDisplay(priceInfo);
+            if (!context.hidePricesInEditor) {
+                const iframe = document.getElementById("printess");
+                if (iframe) {
+                    setTimeout(() => {
+                        iframe.contentWindow.postMessage({
+                            cmd: "refreshPriceDisplay",
+                            priceDisplay: priceInfo
+                        }, "*");
+                    }, 0);
+                }
+                //BcUI
+                const component = this.getPrintessComponent();
+                if (component && component.editor) {
+                    component.editor.ui.refreshPriceDisplay(priceInfo);
+                }
             }
         }
         catch (e) {
@@ -646,6 +648,18 @@ class PrintessEditor {
             document.getElementById("printess")?.contentWindow?.postMessage({ cmd: "getFormField", parameters: [formFieldName] }, "*");
         }
     }
+    static closeAllHtmlDialogs() {
+        document.querySelectorAll(":not(printess-owned) dialog").forEach((x) => {
+            if (typeof x.close === "function") {
+                try {
+                    x.close();
+                }
+                catch (ex) {
+                    console.error(ex);
+                }
+            }
+        });
+    }
     async showBcUiVersion(context, callbacks) {
         const that = this;
         const priceInfo = context.getPriceInfo();
@@ -654,6 +668,7 @@ class PrintessEditor {
         let useCustomLoader = false;
         let formFields = null;
         let mergeTemplates = null;
+        PrintessEditor.closeAllHtmlDialogs();
         if (!isSaveToken) {
             formFields = PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings());
             mergeTemplates = context.getMergeTemplates();
@@ -876,6 +891,7 @@ class PrintessEditor {
         this.lastSaveDate = new Date();
         let isSaveToken = context && context.templateNameOrSaveToken && context.templateNameOrSaveToken.indexOf("st:") === 0;
         this.visible = true;
+        PrintessEditor.closeAllHtmlDialogs();
         const callbacks = {
             onBack: () => {
                 that.hide(context, true);
@@ -3208,6 +3224,9 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 return null;
             },
             setFormFieldValue: (product, formField, value, formFieldLabel, valueLabel) => {
+                if ((valueLabel === null || valueLabel === "") && (value !== null && value !== "")) {
+                    valueLabel = value;
+                }
                 //Radio buttons
                 let inputs = document.querySelectorAll(`input[type="radio"]`);
                 if (inputs && inputs.length > 0) {
@@ -3321,6 +3340,9 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 }
             },
             setProductProperty: (settings, formField, value, formFieldLabel, valueLabel, useFallback = false) => {
+                if ((valueLabel === null || valueLabel === "") && (value !== null && value !== "")) {
+                    valueLabel = value;
+                }
                 if (!settings.basketItemOptions) {
                     settings.basketItemOptions = {};
                 }

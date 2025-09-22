@@ -86,6 +86,8 @@
 
     if product.metafields.printess.productDefinitionId
       assign printessProductDefinitionId = product.metafields.printess.productDefinitionId
+    elsif product.metafields.printess.productdefinitionid
+      assign printessProductDefinitionId = product.metafields.printess.productdefinitionid
     else
       assign printessProductDefinitionId = -1
     endif
