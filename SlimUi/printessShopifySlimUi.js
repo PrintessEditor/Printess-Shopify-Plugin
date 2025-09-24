@@ -31,6 +31,9 @@
             }
         }, timeout);
     }
+    getState() {
+        return this._slimState;
+    }
     static async printessQueryItemAsync(itemQuery, timeout = 50, maxRetires = 20) {
         return new Promise((resolve, reject) => PrintessShopifySlimUi.printessQueryItem(itemQuery, resolve, reject, timeout, maxRetires));
     }
@@ -89,7 +92,7 @@
                     qtyCtrl.value = this._urlParams.quantity.toString();
                 }
             }
-            this._state = await (typeof window["createSlimUi"] === "function" ? window["createSlimUi"] : window["PrintessSlimUi"].createSlimUi)({
+            const createParams = {
                 previewContainer: document.createElement("div"),
                 uiContainer: variantContainer,
                 previewImage: mediaImage ? mediaImage : null,
@@ -98,10 +101,22 @@
                 templateName: templateName,
                 published: true,
                 formFields: formFields,
-                mergeTemplates: mergeTemplates,
+                //mergeTemplates: mergeTemplates,
                 theme: theme,
-                formFieldChangedCallback: function (name, value, tag, label, ffLabel) { that.setProductOptionValue(name, value, ffLabel, label); }
-            });
+                formFieldChangedCallback: function (name, value, tag, label, ffLabel) { that.setProductOptionValue(name, value, ffLabel, label); },
+                callbacks: {
+                    renderPreviewImageCallback: (thumbnailUrl) => {
+                        setTimeout(() => {
+                            that.initThumbnails(thumbnailUrl);
+                        }, 0);
+                    }
+                }
+            };
+            const createSlimUi = typeof window["createSlimUi"] === "function" ? window["createSlimUi"] : window["PrintessSlimUi"]?.createSlimUi;
+            if (typeof createSlimUi !== "function") {
+                throw "SlimUi not found";
+            }
+            this._slimState = await createSlimUi(createParams);
             variantContainer.classList.remove("printess-hidden");
             this.showImageProgressIndicator(false);
             this.showFormsProgressIndicator(false);
@@ -113,6 +128,54 @@
         finally {
             if (this._parent) {
                 this._parent.setAttribute("data-printess-forms-status", "initialized");
+            }
+        }
+    }
+    async initThumbnails(currentImageUrl) {
+        const previewNode = this.getUiNode("image");
+        const thumbnails = PrintessShopifySlimUi.queryElement(this.getUiNode("productThumbnails"), "img", true);
+        const secondThumbnails = PrintessShopifySlimUi.queryElement(this.getUiNode("largePreviewImages"), "img", true);
+        if (!previewNode || !thumbnails || thumbnails.length <= 0) {
+            return;
+        }
+        //Get Previews
+        let currentThumbnailIndex = 0;
+        let skipFirstPreview = thumbnails[0] === previewNode;
+        if (skipFirstPreview) {
+            currentThumbnailIndex++;
+        }
+        if (this._slimState.previews) {
+            for (let i = 0; i < this._slimState.previews.length; i++) {
+                const preview = this._slimState.previews[i];
+                for (let j = 0; j < preview.pageCount; j++) { //1: Skip first image as this is the default display image that is already displayed
+                    if (skipFirstPreview) {
+                        skipFirstPreview = false;
+                        continue;
+                    }
+                    const thumbnailInfo = await this._slimState.getPreviewImageInfo(i, j);
+                    if (thumbnails.length > currentThumbnailIndex) {
+                        const thumbnailImage = thumbnails[currentThumbnailIndex];
+                        thumbnailImage.src = thumbnailInfo.url;
+                        if (typeof thumbnailImage.srcset !== "undefined" && thumbnailImage.srcset) {
+                            thumbnailImage.srcset = thumbnailInfo.url;
+                        }
+                        if (secondThumbnails != null && secondThumbnails.length > currentThumbnailIndex) {
+                            const thumbnailImage = secondThumbnails[currentThumbnailIndex];
+                            thumbnailImage.src = thumbnailInfo.url;
+                            if (typeof thumbnailImage.srcset !== "undefined" && thumbnailImage.srcset) {
+                                thumbnailImage.srcset = thumbnailInfo.url;
+                            }
+                        }
+                    }
+                    currentThumbnailIndex++;
+                }
+            }
+        }
+        if (thumbnails[0] === previewNode && currentImageUrl && secondThumbnails != null && secondThumbnails.length > 0) {
+            const thumbnailImage = secondThumbnails[0];
+            thumbnailImage.src = currentImageUrl;
+            if (typeof thumbnailImage.srcset !== "undefined" && thumbnailImage.srcset) {
+                thumbnailImage.srcset = currentImageUrl;
             }
         }
     }
@@ -137,7 +200,7 @@
         this.showImageProgressIndicator(true);
         PrintessShopifySlimUi.showElement(designNowButton, false);
         try {
-            const result = await this._state.createSaveToken();
+            const result = await this._slimState.createSaveToken();
             const currentOptions = this.getSelectedProductOptions();
             if (this._urlParams && this._urlParams.saveToken && this._urlParams.basketKey) {
                 //Download basket item
@@ -264,7 +327,7 @@
     async onAddToBasket(settings) {
         this.getUiNode("addToBasketButton")?.classList.add("printess-hidden");
         try {
-            const response = await this._state.createSaveToken();
+            const response = await this._slimState.createSaveToken();
             PrintessShopifySlimUi.addOrSetBasketInput(this._productForm, "properties[_printessSaveToken]", response.saveToken);
             PrintessShopifySlimUi.addOrSetBasketInput(this._productForm, "properties[_printessThumbnail]", response.thumbnailUrl);
             if (!settings) {
@@ -909,6 +972,8 @@
         ret.cssAddToBasketButtonSelector = ret.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"]';
         ret.cssPriceTextSelector = ret.cssPriceTextSelector || ".price__regular>span.price-item.price-item--regular";
         ret.cssQuantityInputSelector = ret.cssQuantityInputSelector || '[name="quantity"],[name="qty"]';
+        ret.cssProductThumbnailImageSelector = ret.cssProductThumbnailImageSelector || "slider-component ul li .product__media img,slider-component ul";
+        ret.cssProductLargePreviewImagesSelector = ret.cssProductLargePreviewImagesSelector || "{GLOBAL}.product-media-modal__content";
         return ret;
     }
     /** Initialization */
@@ -1103,6 +1168,21 @@
             }
         }
         return null;
+    }
+    static queryElement(parentNode, cssSelector, queryAll) {
+        if ((cssSelector || "").startsWith("{GLOBAL}")) {
+            parentNode = document;
+            cssSelector = cssSelector.substring(8);
+        }
+        if (!parentNode) {
+            return null;
+        }
+        if (!queryAll) {
+            return parentNode.querySelector(cssSelector);
+        }
+        else {
+            return parentNode.querySelectorAll(cssSelector);
+        }
     }
     //private
     getUiNode(nodeName) {
@@ -1397,44 +1477,51 @@
             getUiNode: (instance, nodeName, productContainer, nodeUsedByPrintess, settings = null) => {
                 switch (nodeName) {
                     case "productInfo": {
-                        nodeUsedByPrintess = productContainer?.querySelector(settings.cssProductInfoSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(productContainer, settings.cssProductInfoSelector, false);
                         break;
                     }
                     case "media": {
-                        nodeUsedByPrintess = productContainer?.querySelector(settings.cssProductMediaSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(productContainer, settings.cssProductMediaSelector, false);
                         break;
                     }
                     case "image": {
-                        nodeUsedByPrintess = ret.getUiNode(instance, "media", productContainer, null, settings)?.querySelector(settings.cssImageSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "media", productContainer, null, settings), settings.cssImageSelector, false);
                         break;
                     }
                     case "price": {
-                        nodeUsedByPrintess = ret.getUiNode(instance, "productInfo", productContainer, null, settings)?.querySelector(settings.cssPriceTextSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "productInfo", productContainer, null, settings), settings.cssPriceTextSelector, false);
                         break;
                     }
                     case "productForm": {
-                        nodeUsedByPrintess = ret.getUiNode(instance, "productInfo", productContainer, null, settings)?.querySelector(settings.cssProductFormSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "productInfo", productContainer, null, settings), settings.cssProductFormSelector, false);
                         break;
                     }
                     case "productId": {
-                        nodeUsedByPrintess = ret.getUiNode(instance, "productForm", productContainer, null, settings)?.querySelector(settings.cssProductIdSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "productForm", productContainer, null, settings), settings.cssProductIdSelector, false);
                         break;
                     }
                     case "progressIndicator": {
-                        nodeUsedByPrintess = ret.getUiNode(instance, "media", productContainer, null, settings)?.querySelector(settings.cssProgressIndicatorSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "media", productContainer, null, settings), settings.cssProgressIndicatorSelector, false);
                         break;
                     }
                     case "addToBasketButton": {
-                        nodeUsedByPrintess = ret.getUiNode(instance, "productForm", productContainer, null, settings)?.querySelector(settings.cssAddToBasketButtonSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "productForm", productContainer, null, settings), settings.cssAddToBasketButtonSelector, false);
                         break;
                     }
                     case "variantSelector": {
-                        nodeUsedByPrintess = ret.getUiNode(instance, "productInfo", productContainer, null, settings)?.querySelector(settings.cssVariantSwitchSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "productInfo", productContainer, null, settings), settings.cssVariantSwitchSelector, false);
                         break;
                     }
                     case "quantity": {
-                        nodeUsedByPrintess = ret.getUiNode(instance, "productInfo", productContainer, null, settings)?.querySelector(settings.cssQuantityInputSelector);
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "productInfo", productContainer, null, settings), settings.cssQuantityInputSelector, false);
                         break;
+                    }
+                    case "productThumbnails": {
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "media", productContainer, null, settings), settings.cssProductThumbnailImageSelector, false);
+                        break;
+                    }
+                    case "largePreviewImages": {
+                        nodeUsedByPrintess = PrintessShopifySlimUi.queryElement(ret.getUiNode(instance, "media", productContainer, null, settings), settings.cssProductLargePreviewImagesSelector, false);
                     }
                     default:
                     //return null;
