@@ -278,6 +278,16 @@
       }
     }
 
+    const quantityInput = document.querySelector('input[name="quantity"],input[name="qty"],select[name="quantity"],select[name="qty"]');
+
+    if(quantityInput) {
+      const qty = parseInt(quantityInput.value);
+
+      if(!isNaN(qty) && isFinite(qty) && Number.isInteger(qty)) {
+        settings.quantity = qty;
+      }
+    }
+
   {% if showSplitterGridSizeButton != null %}settings["showSplitterGridSizeButton"] = {{showSplitterGridSizeButton | json}};{% endif %}
     if(directAddToBasket) {
       window["printessEditor" + product.id].addToBasketWithoutPersonalization(settings);

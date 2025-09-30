@@ -7,7 +7,7 @@ html {
   height: -webkit-fill-available;
 }
 
-body.hideAll>*:not(#printess-container, .printess-owned) {
+body.hideAll>:not(#printess-container, .printess-owned) {
   display: none !important;
 }
 
