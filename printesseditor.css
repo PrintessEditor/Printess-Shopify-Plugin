@@ -7,7 +7,7 @@ html {
   height: -webkit-fill-available;
 }
 
-body.hideAll>:not(#printess-container, .printess-owned) {
+body.hideAll>*:not(#printess-container, .printess-owned) {
   display: none !important;
 }
 
@@ -27,3 +27,38 @@ body.hideAll {
   top: 0;
   left: 0;
 }
+
+/* Loader Css Start */
+.printess_custom_loader {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: white;
+}
+
+.printess_custom_loader .container {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  position: relative;
+  border: 20px solid #cbd81d;
+}
+
+.printess_custom_loader .container img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 98%;
+  object-fit: scale-down;
+  max-height: 98%;
+  max-width: 98%;
+}
+
+/* Loader Css End */

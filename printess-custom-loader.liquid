@@ -24,15 +24,15 @@
     const originalHide = typeof settings.customLoader.onHideLoader === "function" ? settings.customLoader.onHideLoader : null;
 
     settings.customLoader.onShowLoader = () => {
-      const loader = document.getElementById("printess_custom_loader");
+      document.querySelectorAll(".printess_custom_loader")?.forEach((x) => {
+        if(document.body) {
+          if(x.parent !== document.body) {
+            document.body.appendChild(x);
+          }
 
-      if(loader && document.body) {
-        if(loader.parent !== document.body) {
-          document.body.appendChild(loader);
+          x.style.display = "block";
         }
-
-        loader.style.display = "block";
-      }
+      });
 
       if(originalOpen) {
         originalOpen();
@@ -40,11 +40,9 @@
     };
 
     settings.customLoader.onHideLoader = () => {
-      const loader = document.getElementById("printess_custom_loader");
-
-      if(loader) {
-        loader.style.display="none";
-      }
+      document.querySelectorAll(".printess_custom_loader")?.forEach((x) => {
+        x.style.display="none";
+      });
 
       if(originalHide) {
         originalHide();
@@ -53,37 +51,7 @@
   }
 </script>
 
-<style>
-  #printess_custom_loader {
-    width: 100vw;
-    height: 100vh;
-    margin: 0;
-    position: fixed;
-    top: 0;
-    left: 0;
-    overflow: hidden;
-    border:0;
-    padding:0;
-  }
-
-  #printess_custom_loader .container {
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    position: relative;
-    border: 20px solid #cbd81d;
-  }
-
-  #printess_custom_loader .container img {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 98%;
-  }
-</style>
-
-<div id="printess_custom_loader" class="printess-owned" style="display:none;">
+<div class="printess_custom_loader printess-owned" style="display:none;">
   <div class="container">
   {% if imgUrl != blank %}
     <img class="" src="{{ imgUrl }}">

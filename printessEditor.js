@@ -899,7 +899,7 @@ class PrintessSharedTools {
         }
         if (printessComponent && printessComponent.editor) {
             printessComponent.style.display = "block";
-            await printessComponent.editor.api.loadTemplateAndFormFields(context.templateNameOrSaveToken, mergeTemplates, formFields, null);
+            await printessComponent.editor.api.loadTemplateAndFormFields(context.templateNameOrSaveToken, mergeTemplates, formFields, null, null, true);
             if (!isSaveToken && pageCount !== null && pageCount > 0) {
                 await printessComponent.editor.api.setBookInsidePages(pageCount);
             }
