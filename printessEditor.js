@@ -20,7 +20,7 @@ class PrintessSharedTools {
         textarea.innerHTML = encoded;
         return textarea.value;
     }
-    static parseMergeTemplate(template) {
+    static parseMergeTemplate(template, globalMergeModeOverwrite) {
         let ret = [];
         if (template) {
             if (Array.isArray(template)) {
@@ -59,6 +59,11 @@ class PrintessSharedTools {
                     }
                 }
             }
+        }
+        if (globalMergeModeOverwrite) {
+            ret.forEach((mergeTemplate) => {
+                mergeTemplate.mergeMode = globalMergeModeOverwrite;
+            });
         }
         return ret;
     }
@@ -126,6 +131,27 @@ class PrintessSharedTools {
             return ret;
         }
     }
+    static filter(items, callback) {
+        const ret = {};
+        PrintessSharedTools.forEach(items, (value, index, arr, key) => {
+            if (callback(value, items, key, index) === true) {
+                ret[key] = value;
+            }
+        });
+        return ret;
+    }
+    static filterAsArray(items, callback) {
+        const ret = [];
+        PrintessSharedTools.forEach(items, (value, index, arr, key) => {
+            if (callback(value, items, key, index) === true) {
+                ret.push({
+                    key: key,
+                    value: value
+                });
+            }
+        });
+        return ret;
+    }
     static ensureHttpProtocol(domain) {
         let ret = ((typeof domain !== "string" ? domain.apiDomain : domain) || "").trim();
         if (ret.indexOf("http://") !== 0 && ret.indexOf("https://")) {
@@ -158,6 +184,16 @@ class PrintessSharedTools {
         });
         return ret;
     }
+    static sanitizeHost(host) {
+        if (host) {
+            host = host.trim();
+            if (host.endsWith("/")) {
+                return host;
+            }
+            return host + "/";
+        }
+        return host || "";
+    }
     static async postJsonAsync(url, params, token, additionalHeaders) {
         const headers = {
             "Content-Type": 'application/json'
@@ -186,26 +222,77 @@ class PrintessSharedTools {
     loadTagsAsync(settings) {
         return PrintessSharedTools.postJsonAsync(PrintessSharedTools.urlConcat(PrintessSharedTools.ensureHttpProtocol(settings), "snippets/tags/load"), { includeGlobal: settings.includeGlobalTags === true }, settings.serviceToken);
     }
+    static generateUUID() {
+        var d = new Date().getTime(); //Timestamp
+        var d2 = ((typeof performance !== 'undefined') && performance.now && (performance.now() * 1000)) || 0; //Time in microseconds since page-load or 0 if unsupported
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            var r = Math.random() * 16; //random number between 0 and 16
+            if (d > 0) { //Use timestamp until depleted
+                r = (d + r) % 16 | 0;
+                d = Math.floor(d / 16);
+            }
+            else { //Use microseconds since page-load if supported
+                r = (d2 + r) % 16 | 0;
+                d2 = Math.floor(d2 / 16);
+            }
+            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+    }
+    static getFileNameFromUrl(fileName) {
+        return (fileName || "").split('#')[0].split('?')[0].split('/').pop();
+    }
+    static async downloadImages(images) {
+        const ret = [];
+        if (Array.isArray(images)) {
+            for (let i = 0; i < images.length; ++i) {
+                const response = await fetch(images[i].value);
+                if (response.ok) {
+                    const blob = await response.blob();
+                    ret.push({
+                        name: images[i].name,
+                        data: new File([blob], this.getFileNameFromUrl(images[i].value), { type: blob.type })
+                    });
+                }
+                else {
+                    console.error("Unable to download image " + images[i].value + "; [" + response.status.toString() + "] " + response.statusText + ": " + await response.text());
+                }
+            }
+        }
+        else {
+            for (const fileName in images) {
+                if (images.hasOwnProperty(fileName)) {
+                    const fileUrl = images[fileName];
+                    const response = await fetch(fileUrl);
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        ret.push({
+                            name: fileName,
+                            data: new File([blob], this.getFileNameFromUrl(fileUrl), { type: blob.type })
+                        });
+                    }
+                    else {
+                        console.error("Unable to download image " + images[fileName] + "; [" + response.status.toString() + "] " + response.statusText + ": " + await response.text());
+                    }
+                }
+            }
+        }
+        return ret;
+    }
 }
-//# sourceMappingURL=printessSharedTools.js.map
-;
-;
-;
-; class PrintessEditor {
+class PrintessEditor {
     constructor(settings) {
         this.lastSaveDate = new Date();
-        this.visible = false;
-        this.calculateCurrentPrices = async (priceInfo, context) => {
-            const r = await this.getPriceCategories(context);
+        this.calculateCurrentPrices = async (priceInfo) => {
+            const r = await this.getPriceCategories();
             let basePrice = r.basePrice;
             if (priceInfo.snippetPriceCategories) {
                 priceInfo.snippetPriceCategories.forEach((x) => {
-                    if (x && x.amount > 0 && context.snippetPrices[x.priceCategory - 1]) {
-                        basePrice += context.snippetPrices[x.priceCategory - 1].priceInCent; // * x.amount;
+                    if (x && x.amount > 0 && PrintessEditor.currentContext.snippetPrices[x.priceCategory - 1]) {
+                        basePrice += PrintessEditor.currentContext.snippetPrices[x.priceCategory - 1].priceInCent; // * x.amount;
                     }
                 });
             }
-            r.price = context.formatMoney(basePrice);
+            r.price = PrintessEditor.currentContext.formatMoney(basePrice);
             return r;
         };
         if (!settings || !settings.shopToken) {
@@ -214,7 +301,6 @@ class PrintessSharedTools {
         this.Settings = {
             ...settings
         };
-        this.visible = false;
         const hasUiSettings = typeof this.Settings.uiSettings !== "undefined" && this.Settings.uiSettings !== null;
         const startupSettings = {};
         if (hasUiSettings) {
@@ -429,7 +515,7 @@ class PrintessSharedTools {
             }
         }
     }
-    async initializeIFrame(callbacks, context, settings) {
+    async initializeIFrame(callbacks, settings) {
         const that = this;
         let iFrame = document.getElementById("printess");
         const closeTabListener = (evt) => {
@@ -459,14 +545,14 @@ class PrintessSharedTools {
                         }
                     };
                     try {
-                        if (typeof context.onAllowAddToBasket === "function") {
-                            const result = context.onAllowAddToBasket(evt.data.token, evt.data.thumbnailUrl);
+                        if (typeof PrintessEditor.currentContext.onAllowAddToBasket === "function") {
+                            const result = PrintessEditor.currentContext.onAllowAddToBasket(evt.data.token, evt.data.thumbnailUrl);
                             if (typeof result !== "boolean" || result === true) {
                                 addToBasket(evt.data.token, evt.data.thumbnailUrl);
                             }
                         }
-                        else if (typeof context.onAllowAddToBasketAsync === "function") {
-                            context.onAllowAddToBasketAsync(evt.data.token, evt.data.thumbnailUrl).then((result) => {
+                        else if (typeof PrintessEditor.currentContext.onAllowAddToBasketAsync === "function") {
+                            PrintessEditor.currentContext.onAllowAddToBasketAsync(evt.data.token, evt.data.thumbnailUrl).then((result) => {
                                 if (typeof result !== "boolean" || result === true) {
                                     addToBasket(evt.data.token, evt.data.thumbnailUrl);
                                 }
@@ -512,7 +598,7 @@ class PrintessSharedTools {
                 case 'loaded': {
                     if (that.Settings.autoImportImageUrlsInFormFields === true) {
                         try {
-                            const images = await that.downloadImages(that.getImagesInFormFields(PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings())));
+                            const images = await that.downloadImages(that.getImagesInFormFields(PrintessEditor.applyFormFieldMappings(PrintessEditor.currentContext.getCurrentFormFieldValues(), PrintessEditor.currentContext.getFormFieldMappings())));
                             if (!that.tempUploadImages) {
                                 that.tempUploadImages = images;
                             }
@@ -531,14 +617,14 @@ class PrintessSharedTools {
                         }
                     }
                     if (that.Settings.autoImportUserImages === true) {
-                        let userId = await PrintessEditor.getUserId(context);
-                        let basketId = await PrintessEditor.getOrGenerateBasketId(context);
+                        let userId = await PrintessEditor.getUserId();
+                        let basketId = await PrintessEditor.getOrGenerateBasketId();
                         if (userId || basketId) {
                             that.uploadUserImagesToClassicEditor(iFrame, basketId, userId);
                         }
                     }
                     if (callbacks && typeof callbacks.onLoadAsync === "function") {
-                        callbacks.onLoadAsync(context.templateNameOrSaveToken);
+                        callbacks.onLoadAsync(PrintessEditor.currentContext.templateNameOrSaveToken);
                     }
                     break;
                 }
@@ -626,25 +712,25 @@ class PrintessSharedTools {
         });
         return ret;
     }
-    async getPriceCategories(context, formFieldValues = null) {
+    async getPriceCategories(formFieldValues = null) {
         let price = 0;
         if (!formFieldValues) {
-            formFieldValues = context.getCurrentFormFieldValues();
+            formFieldValues = PrintessEditor.currentContext.getCurrentFormFieldValues();
         }
-        if (typeof context.getPriceForFormFieldsAsync === "function") {
-            price = await context.getPriceForFormFieldsAsync(formFieldValues);
+        if (typeof PrintessEditor.currentContext.getPriceForFormFieldsAsync === "function") {
+            price = await PrintessEditor.currentContext.getPriceForFormFieldsAsync(formFieldValues);
         }
-        else if (typeof context.getPriceForFormFields === "function") {
-            price = context.getPriceForFormFields(formFieldValues);
+        else if (typeof PrintessEditor.currentContext.getPriceForFormFields === "function") {
+            price = PrintessEditor.currentContext.getPriceForFormFields(formFieldValues);
         }
         const r = {
-            snippetPrices: context.snippetPrices.map((x) => x ? x.label : null),
+            snippetPrices: PrintessEditor.currentContext.snippetPrices.map((x) => x ? x.label : null),
             priceCategories: {},
-            price: context.formatMoney(price),
+            price: PrintessEditor.currentContext.formatMoney(price),
             basePrice: price,
-            productName: context.getProductName(),
-            legalNotice: context.legalText,
-            infoUrl: context.legalTextUrl
+            productName: PrintessEditor.currentContext.getProductName(),
+            legalNotice: PrintessEditor.currentContext.legalText,
+            infoUrl: PrintessEditor.currentContext.legalTextUrl
         };
         return r;
     }
@@ -653,25 +739,25 @@ class PrintessSharedTools {
         const loweruiVersion = this.Settings.uiSettings && this.Settings.uiSettings.uiVersion ? this.Settings.uiSettings.uiVersion.toLowerCase().trim() : "";
         return loweruiVersion === "bcui" || loweruiVersion === "panelui";
     }
-    async onPriceChanged(priceChangedInfo, context) {
+    async onPriceChanged(priceChangedInfo) {
         try {
             let priceInfo = null;
             try {
                 if (typeof priceChangedInfo.pageCount !== "undefined") {
-                    if (context.currentPageCount !== priceChangedInfo.pageCount) {
-                        context.currentPageCount = priceChangedInfo.pageCount;
-                        if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined") {
-                            if (typeof context.onFormFieldChanged === "function") {
+                    if (PrintessEditor.currentContext.currentPageCount !== priceChangedInfo.pageCount) {
+                        PrintessEditor.currentContext.currentPageCount = priceChangedInfo.pageCount;
+                        if (PrintessEditor.currentContext.additionalAttachParams && typeof PrintessEditor.currentContext.additionalAttachParams["pageCountFormField"] !== "undefined") {
+                            if (typeof PrintessEditor.currentContext.onFormFieldChanged === "function") {
                                 try {
-                                    context.onFormFieldChanged(context.additionalAttachParams["pageCountFormField"], context.currentPageCount.toString(), "", "");
+                                    PrintessEditor.currentContext.onFormFieldChanged(PrintessEditor.currentContext.additionalAttachParams["pageCountFormField"], PrintessEditor.currentContext.currentPageCount.toString(), "", "");
                                 }
                                 catch (ex) {
                                     console.error(ex);
                                 }
                             }
-                            if (typeof context.onFormFieldChangedAsync === "function") {
+                            if (typeof PrintessEditor.currentContext.onFormFieldChangedAsync === "function") {
                                 try {
-                                    await context.onFormFieldChangedAsync(context.additionalAttachParams["pageCountFormField"], context.currentPageCount.toString(), "", "");
+                                    await PrintessEditor.currentContext.onFormFieldChangedAsync(PrintessEditor.currentContext.additionalAttachParams["pageCountFormField"], PrintessEditor.currentContext.currentPageCount.toString(), "", "");
                                 }
                                 catch (ex) {
                                     console.error(ex);
@@ -681,25 +767,25 @@ class PrintessSharedTools {
                     }
                 }
                 if (priceChangedInfo.snippetPriceCategories && priceChangedInfo.snippetPriceCategories.length > 0) {
-                    context.stickers = priceChangedInfo.snippetPriceCategories.filter((x) => context.snippetPrices && context.snippetPrices.length >= x.priceCategory).map((x) => {
+                    PrintessEditor.currentContext.stickers = priceChangedInfo.snippetPriceCategories.filter((x) => PrintessEditor.currentContext.snippetPrices && PrintessEditor.currentContext.snippetPrices.length >= x.priceCategory).map((x) => {
                         return {
-                            productVariantId: context.snippetPrices[x.priceCategory - 1].variantId,
+                            productVariantId: PrintessEditor.currentContext.snippetPrices[x.priceCategory - 1].variantId,
                             quantity: x.amount
                         };
                     });
                 }
                 else {
-                    context.stickers = [];
+                    PrintessEditor.currentContext.stickers = [];
                 }
-                if (typeof priceChangedInfo.printedRecordsCount !== "undefined" && priceChangedInfo.printedRecordsCount > 0 && typeof context.propertyChanged === "function" && priceChangedInfo.hasCirculationColumn === true) {
-                    context.propertyChanged("circulationRecordCount", priceChangedInfo.printedRecordsCount.toString());
+                if (typeof priceChangedInfo.printedRecordsCount !== "undefined" && priceChangedInfo.printedRecordsCount > 0 && typeof PrintessEditor.currentContext.propertyChanged === "function" && priceChangedInfo.hasCirculationColumn === true) {
+                    PrintessEditor.currentContext.propertyChanged("circulationRecordCount", priceChangedInfo.printedRecordsCount.toString());
                 }
-                priceInfo = await this.calculateCurrentPrices(priceChangedInfo, context);
+                priceInfo = await this.calculateCurrentPrices(priceChangedInfo);
             }
             catch (e) {
                 console.error(e);
             }
-            if (!context.hidePricesInEditor) {
+            if (!PrintessEditor.currentContext.hidePricesInEditor) {
                 const iframe = document.getElementById("printess");
                 if (iframe) {
                     setTimeout(() => {
@@ -720,17 +806,24 @@ class PrintessSharedTools {
         }
     }
     ;
-    hideBcUiVersion(context, closeButtonClicked) {
-        this.visible = false;
-        const editor = this.getPrintessComponent();
-        if (editor && editor.editor) {
-            editor.editor.ui.hide();
+    hideBcUiVersion(closeButtonClicked) {
+        if (!PrintessEditor.visible) {
+            return;
         }
-        if (typeof context.editorClosed === "function") {
-            context.editorClosed(closeButtonClicked === true);
+        try {
+            const editor = this.getPrintessComponent();
+            if (editor && editor.editor) {
+                editor.editor.ui.hide();
+            }
+            if (typeof PrintessEditor.currentContext.editorClosed === "function") {
+                PrintessEditor.currentContext.editorClosed(closeButtonClicked === true);
+            }
+            //Hide the web page scrolling
+            document.body.classList.remove('hideAll');
         }
-        //Hide the web page scrolling
-        document.body.classList.remove('hideAll');
+        finally {
+            PrintessEditor.visible = false;
+        }
     }
     async downloadImages(images) {
         const ret = [];
@@ -790,40 +883,44 @@ class PrintessSharedTools {
             return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
         });
     }
-    static async getOrGenerateBasketId(context) {
-        let ret = typeof context?.getBasketId === "function" ? context.getBasketId() : "";
-        if (!ret && typeof context?.getBasketIdAsync === "function") {
-            ret = await context.getBasketIdAsync() || null;
+    static async getOrGenerateBasketId() {
+        let ret = null;
+        if (PrintessEditor.currentContext) {
+            ret = typeof PrintessEditor.currentContext.getBasketId === "function" ? PrintessEditor.currentContext.getBasketId() : "";
+            if (!ret && typeof PrintessEditor.currentContext.getBasketIdAsync === "function") {
+                ret = await PrintessEditor.currentContext.getBasketIdAsync() || null;
+            }
         }
         if (!ret) {
-            if (!ret) {
-                try {
-                    ret = localStorage.getItem("printessUniqueBasketId");
-                }
-                catch (e) {
-                    console.warn("Unable to read user id from local storage.");
-                }
+            try {
+                ret = localStorage.getItem("printessUniqueBasketId");
             }
-            if (!ret) {
-                ret = window["printessUniqueBasketId"];
+            catch (e) {
+                console.warn("Unable to read user id from local storage.");
             }
-            if (!ret) {
-                ret = PrintessEditor.generateUUID() + "_" + new Date().valueOf().toString();
-                try {
-                    localStorage.setItem("printessUniqueBasketId", ret);
-                }
-                catch (e) {
-                    window["printessUniqueBasketId"] = ret;
-                    console.warn("Unable to write user id to local storage.");
-                }
+        }
+        if (!ret) {
+            ret = window["printessUniqueBasketId"];
+        }
+        if (!ret) {
+            ret = PrintessEditor.generateUUID() + "_" + new Date().valueOf().toString();
+            try {
+                localStorage.setItem("printessUniqueBasketId", ret);
+            }
+            catch (e) {
+                window["printessUniqueBasketId"] = ret;
+                console.warn("Unable to write user id to local storage.");
             }
         }
         return ret || null;
     }
-    static async getUserId(context) {
-        let ret = typeof context.getUserId === "function" ? context.getUserId() : null;
-        if (!ret && typeof context.getUserIdAsync === "function") {
-            ret = await context.getUserIdAsync();
+    static async getUserId() {
+        let ret = null;
+        if (PrintessEditor.currentContext) {
+            ret = typeof PrintessEditor.currentContext.getUserId === "function" ? PrintessEditor.currentContext.getUserId() : null;
+            if (!ret && typeof PrintessEditor.currentContext.getUserIdAsync === "function") {
+                ret = await PrintessEditor.currentContext.getUserIdAsync();
+            }
         }
         return ret;
     }
@@ -852,20 +949,20 @@ class PrintessSharedTools {
             }
         });
     }
-    async showBcUiVersion(context, callbacks) {
+    async showBcUiVersion(callbacks) {
         const that = this;
-        const priceInfo = context.getPriceInfo();
-        let isSaveToken = context && context.templateNameOrSaveToken && context.templateNameOrSaveToken.indexOf("st:") === 0;
+        const priceInfo = PrintessEditor.currentContext.getPriceInfo();
+        let isSaveToken = PrintessEditor.currentContext.templateNameOrSaveToken && PrintessEditor.currentContext.templateNameOrSaveToken.indexOf("st:") === 0;
         let pageCount = null;
         let useCustomLoader = false;
         let formFields = null;
         let mergeTemplates = null;
         PrintessEditor.closeAllHtmlDialogs();
         if (!isSaveToken) {
-            formFields = PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings());
-            mergeTemplates = context.getMergeTemplates();
-            if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined") {
-                const pageFormField = formFields.filter(x => x.name === context.additionalAttachParams["pageCountFormField"]);
+            formFields = PrintessEditor.applyFormFieldMappings(PrintessEditor.currentContext.getCurrentFormFieldValues(), PrintessEditor.currentContext.getFormFieldMappings());
+            mergeTemplates = PrintessEditor.currentContext.getMergeTemplates();
+            if (PrintessEditor.currentContext.additionalAttachParams && typeof PrintessEditor.currentContext.additionalAttachParams["pageCountFormField"] !== "undefined") {
+                const pageFormField = formFields.filter(x => x.name === PrintessEditor.currentContext.additionalAttachParams["pageCountFormField"]);
                 if (pageFormField && pageFormField.length > 0) {
                     let intValue = PrintessEditor.extractNumber(pageFormField[0].value);
                     if (!isNaN(intValue) && isFinite(intValue)) {
@@ -899,19 +996,19 @@ class PrintessSharedTools {
         }
         if (printessComponent && printessComponent.editor) {
             printessComponent.style.display = "block";
-            await printessComponent.editor.api.loadTemplateAndFormFields(context.templateNameOrSaveToken, mergeTemplates, formFields, null, null, true);
+            await printessComponent.editor.api.loadTemplateAndFormFields(PrintessEditor.currentContext.templateNameOrSaveToken, mergeTemplates, formFields, null, null, true);
             if (!isSaveToken && pageCount !== null && pageCount > 0) {
                 await printessComponent.editor.api.setBookInsidePages(pageCount);
             }
             setTimeout(async function () {
-                if (context.hidePricesInEditor !== true) {
-                    that.calculateCurrentPrices({}, context).then((priceChangedInfo) => {
+                if (PrintessEditor.currentContext.hidePricesInEditor !== true) {
+                    that.calculateCurrentPrices({}).then((priceChangedInfo) => {
                         printessComponent.editor.ui.refreshPriceDisplay(priceChangedInfo);
                     });
                 }
                 if (that.Settings.autoImportImageUrlsInFormFields === true) {
                     try {
-                        const images = await that.downloadImages(that.getImagesInFormFields(PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings())));
+                        const images = await that.downloadImages(that.getImagesInFormFields(PrintessEditor.applyFormFieldMappings(PrintessEditor.currentContext.getCurrentFormFieldValues(), PrintessEditor.currentContext.getFormFieldMappings())));
                         await that.uploadImagesToBcUiEditor(images, printessComponent.editor);
                     }
                     catch (e) {
@@ -920,8 +1017,8 @@ class PrintessSharedTools {
                 }
                 if (that.Settings.autoImportUserImages === true) {
                     try {
-                        let userId = await PrintessEditor.getUserId(context);
-                        let basketId = await PrintessEditor.getOrGenerateBasketId(context);
+                        let userId = await PrintessEditor.getUserId();
+                        let basketId = await PrintessEditor.getOrGenerateBasketId();
                         if (userId || basketId) {
                             await that.uploadUserImagesToBcUiEditor(printessComponent.editor, basketId, userId);
                         }
@@ -930,7 +1027,7 @@ class PrintessSharedTools {
                         console.error(e);
                     }
                 }
-                await callbacks.onLoadAsync(context.templateNameOrSaveToken);
+                await callbacks.onLoadAsync(PrintessEditor.currentContext.templateNameOrSaveToken);
                 if (globalSettings && globalSettings.customLoader && typeof globalSettings.customLoader.onHideLoader === "function") {
                     try {
                         globalSettings.customLoader.onHideLoader();
@@ -956,15 +1053,16 @@ class PrintessSharedTools {
                 mergeTemplates: mergeTemplates,
                 formFields: formFields,
                 token: that.Settings.shopToken,
-                templateName: context.templateNameOrSaveToken, // "Premier Test-3",// "test Trigger Dialog",  // "price-tester", // "Premier Test", //  "Children's book", // "Label FF Test", //"test Trigger Dialog",   "test Trigger Dialog", // "Bathrobe Man", //
+                templateName: PrintessEditor.currentContext.templateNameOrSaveToken, // "Premier Test-3",// "test Trigger Dialog",  // "price-tester", // "Premier Test", //  "Children's book", // "Label FF Test", //"test Trigger Dialog",   "test Trigger Dialog", // "Bathrobe Man", //
                 //templateVersion: "publish",//"draft"
                 translationKey: "auto", //"en"
-                basketId: await PrintessEditor.getOrGenerateBasketId(context),
-                shopUserId: await PrintessEditor.getUserId(context),
+                basketId: await PrintessEditor.getOrGenerateBasketId(),
+                shopUserId: await PrintessEditor.getUserId(),
                 // mobileMargin: {left: 20, right: 40, top: 30, bottom: 40},
                 // allowZoomAndPan: false,
                 snippetPriceCategoryLabels: priceInfo && priceInfo.snippetPrices ? priceInfo.snippetPrices : null,
                 theme: theme,
+                skipExchangeStateApplication: true,
                 addToBasketCallback: (token, thumbnailUrl) => {
                     const addToBasket = (saveToken, thumbnailUrl) => {
                         window.removeEventListener('beforeunload', closeTabListener);
@@ -973,14 +1071,14 @@ class PrintessSharedTools {
                             callbacks.onAddToBasketAsync(token, thumbnailUrl).then(() => { });
                         }
                     };
-                    if (typeof context.onAllowAddToBasket === "function") {
-                        const result = context.onAllowAddToBasket(token, thumbnailUrl);
+                    if (typeof PrintessEditor.currentContext.onAllowAddToBasket === "function") {
+                        const result = PrintessEditor.currentContext.onAllowAddToBasket(token, thumbnailUrl);
                         if (typeof result !== "boolean" || result === true) {
                             addToBasket(token, thumbnailUrl);
                         }
                     }
-                    else if (typeof context.onAllowAddToBasketAsync === "function") {
-                        context.onAllowAddToBasketAsync(token, thumbnailUrl).then((result) => {
+                    else if (typeof PrintessEditor.currentContext.onAllowAddToBasketAsync === "function") {
+                        PrintessEditor.currentContext.onAllowAddToBasketAsync(token, thumbnailUrl).then((result) => {
                             if (typeof result !== "boolean" || result === true) {
                                 addToBasket(token, thumbnailUrl);
                             }
@@ -1003,14 +1101,14 @@ class PrintessSharedTools {
                 backButtonCallback: (saveToken) => {
                     window.removeEventListener('beforeunload', closeTabListener);
                     window.removeEventListener('unload', closeTabListener);
-                    that.hideBcUiVersion(context, true);
+                    that.hideBcUiVersion(true);
                 },
                 saveTemplateCallback: (saveToken, type, thumbnailUrl) => {
                     if (typeof callbacks.onSaveAsync === "function") {
                         callbacks.onSaveAsync(saveToken, thumbnailUrl);
                     }
                     if (type && type === "close") {
-                        that.hideBcUiVersion(context, true);
+                        that.hideBcUiVersion(true);
                     }
                 },
                 loadingDoneCallback: () => {
@@ -1024,8 +1122,8 @@ class PrintessSharedTools {
                     }
                 }
             };
-            if (typeof context.showSplitterGridSizeButton !== "undefined" && context.showSplitterGridSizeButton !== null) {
-                attachParams["showSplitterGridSizeButton"] = context.showSplitterGridSizeButton === true || context.showSplitterGridSizeButton === "true";
+            if (typeof PrintessEditor.currentContext.showSplitterGridSizeButton !== "undefined" && PrintessEditor.currentContext.showSplitterGridSizeButton !== null) {
+                attachParams["showSplitterGridSizeButton"] = PrintessEditor.currentContext.showSplitterGridSizeButton === true || PrintessEditor.currentContext.showSplitterGridSizeButton === "true";
             }
             if (!isSaveToken && pageCount !== null && pageCount >= 1) {
                 attachParams["bookInsidePages"] = pageCount;
@@ -1042,13 +1140,13 @@ class PrintessSharedTools {
                 if (!printessComponent) {
                     return;
                 }
-                if (context.hidePricesInEditor !== true) {
-                    const priceChangedInfo = await that.calculateCurrentPrices({}, context);
+                if (PrintessEditor.currentContext.hidePricesInEditor !== true) {
+                    const priceChangedInfo = await that.calculateCurrentPrices({});
                     printessComponent.editor.ui.refreshPriceDisplay(priceChangedInfo);
                 }
                 if (that.Settings.autoImportImageUrlsInFormFields === true) {
                     try {
-                        const images = await that.downloadImages(that.getImagesInFormFields(PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings())));
+                        const images = await that.downloadImages(that.getImagesInFormFields(PrintessEditor.applyFormFieldMappings(PrintessEditor.currentContext.getCurrentFormFieldValues(), PrintessEditor.currentContext.getFormFieldMappings())));
                         await that.uploadImagesToBcUiEditor(images, printessComponent.editor);
                     }
                     catch (e) {
@@ -1057,8 +1155,8 @@ class PrintessSharedTools {
                 }
                 if (that.Settings.autoImportUserImages === true) {
                     try {
-                        let userId = await PrintessEditor.getUserId(context);
-                        let basketId = await PrintessEditor.getOrGenerateBasketId(context);
+                        let userId = await PrintessEditor.getUserId();
+                        let basketId = await PrintessEditor.getOrGenerateBasketId();
                         if (userId || basketId) {
                             await that.uploadUserImagesToBcUiEditor(printessComponent.editor, basketId, userId);
                         }
@@ -1078,71 +1176,75 @@ class PrintessSharedTools {
         }
         return parseInt([...inputStr].reduce((x, y) => (check(y) ? x + y : x), ""));
     }
-    async show(context) {
+    async show(shopContext) {
+        if (PrintessEditor.visible) {
+            return false;
+        }
+        PrintessEditor.visible = true;
+        PrintessEditor.currentContext = shopContext;
         const that = this;
         this.lastSaveDate = new Date();
-        let isSaveToken = context && context.templateNameOrSaveToken && context.templateNameOrSaveToken.indexOf("st:") === 0;
-        this.visible = true;
+        let isSaveToken = shopContext && shopContext.templateNameOrSaveToken && shopContext.templateNameOrSaveToken.indexOf("st:") === 0;
         PrintessEditor.closeAllHtmlDialogs();
         const callbacks = {
             onBack: () => {
-                that.hide(context, true);
+                that.hide(true);
             },
             onAddToBasketAsync: async (saveToken, thumbnailUrl) => {
                 let result = null;
-                if (typeof context.onAddToBasketAsync === "function") {
-                    result = await context.onAddToBasketAsync(saveToken, thumbnailUrl);
+                if (typeof PrintessEditor.currentContext.onAddToBasketAsync === "function") {
+                    result = await PrintessEditor.currentContext.onAddToBasketAsync(saveToken, thumbnailUrl);
                 }
                 else {
-                    result = context.onAddToBasket(saveToken, thumbnailUrl);
+                    result = PrintessEditor.currentContext.onAddToBasket(saveToken, thumbnailUrl);
                 }
                 if (result && result.waitUntilClosingMS) {
                     setTimeout(function () {
                         if (typeof result.executeBeforeClosing === "function") {
                             result.executeBeforeClosing();
                         }
-                        that.hide(context, false);
+                        that.hide(false);
                     }, result.waitUntilClosingMS);
                 }
                 else {
                     if (result && typeof result.executeBeforeClosing === "function") {
                         result.executeBeforeClosing();
                     }
-                    that.hide(context, false);
+                    that.hide(false);
                 }
             },
             onFormFieldChangedAsync: async (formFieldName, formFieldValue, formFieldLabel, formFieldValueLabel) => {
-                const formField = that.reverseFormFieldMapping(formFieldName, formFieldValue, context.getFormFieldMappings());
-                if (typeof context.onFormFieldChangedAsync === "function") {
-                    await context.onFormFieldChanged(formField.name, formField.value, formFieldLabel, formFieldValueLabel);
+                const formField = that.reverseFormFieldMapping(formFieldName, formFieldValue, PrintessEditor.currentContext.getFormFieldMappings());
+                if (typeof PrintessEditor.currentContext.onFormFieldChangedAsync === "function") {
+                    await PrintessEditor.currentContext.onFormFieldChanged(formField.name, formField.value, formFieldLabel, formFieldValueLabel);
                 }
-                else if (typeof context.onFormFieldChanged === "function") {
-                    context.onFormFieldChanged(formField.name, formField.value, formFieldLabel, formFieldValueLabel);
+                else if (typeof PrintessEditor.currentContext.onFormFieldChanged === "function") {
+                    PrintessEditor.currentContext.onFormFieldChanged(formField.name, formField.value, formFieldLabel, formFieldValueLabel);
                 }
             },
             onPriceChangedAsync: async (priceInfo) => {
-                await that.onPriceChanged(priceInfo, context);
+                await that.onPriceChanged(priceInfo);
             },
             onGetFormField: (result) => {
-                if (typeof context.onGetFormField === "function") {
-                    context.onGetFormField(result);
+                if (typeof PrintessEditor.currentContext.onGetFormField === "function") {
+                    PrintessEditor.currentContext.onGetFormField(result);
                 }
             },
             onSaveAsync: async (saveToken, thumbnailUrl) => {
                 that.lastSaveDate = new Date();
-                if (typeof context.onSaveAsync === "function") {
-                    await context.onSaveAsync(saveToken, thumbnailUrl);
+                if (typeof PrintessEditor.currentContext.onSaveAsync === "function") {
+                    await PrintessEditor.currentContext.onSaveAsync(saveToken, thumbnailUrl);
                 }
-                else if (typeof context.onSave === "function") {
-                    context.onSave(saveToken, thumbnailUrl);
+                else if (typeof PrintessEditor.currentContext.onSave === "function") {
+                    PrintessEditor.currentContext.onSave(saveToken, thumbnailUrl);
                 }
             },
             onLoadAsync: async (currentTemplateNameOrSaveToken) => {
-                if (typeof context.onLoadAsync === "function") {
-                    await context.onLoadAsync(currentTemplateNameOrSaveToken);
+                if (typeof PrintessEditor.currentContext.onLoadAsync === "function") {
+                    await PrintessEditor.currentContext.onLoadAsync(currentTemplateNameOrSaveToken);
                 }
-                else if (typeof context.onLoad === "function") {
-                    context.onLoad(currentTemplateNameOrSaveToken);
+                else if (typeof PrintessEditor.currentContext.onLoad === "function") {
+                    PrintessEditor.currentContext.onLoad(currentTemplateNameOrSaveToken);
                 }
             },
             onCloseTab: (evt) => {
@@ -1150,24 +1252,22 @@ class PrintessSharedTools {
                 evt.returnValue = '';
             }
         };
-        if (context) {
-            context.save = function () {
-                that.save(callbacks);
-            };
-        }
+        PrintessEditor.currentContext.save = function () {
+            that.save(callbacks);
+        };
         if (this.usePanelUi()) {
-            that.showBcUiVersion(context, callbacks);
+            that.showBcUiVersion(callbacks);
         }
         else {
-            const priceInfo = context.getPriceInfo();
+            const priceInfo = PrintessEditor.currentContext.getPriceInfo();
             let pageCount = null;
             let formFields = null;
             let mergeTemplates = null;
             if (!isSaveToken) {
-                formFields = PrintessEditor.applyFormFieldMappings(context.getCurrentFormFieldValues(), context.getFormFieldMappings());
-                mergeTemplates = context.getMergeTemplates();
-                if (context.additionalAttachParams && typeof context.additionalAttachParams["pageCountFormField"] !== "undefined") {
-                    const pageFormField = formFields.filter(x => x.name === context.additionalAttachParams["pageCountFormField"]);
+                formFields = PrintessEditor.applyFormFieldMappings(PrintessEditor.currentContext.getCurrentFormFieldValues(), PrintessEditor.currentContext.getFormFieldMappings());
+                mergeTemplates = PrintessEditor.currentContext.getMergeTemplates();
+                if (PrintessEditor.currentContext.additionalAttachParams && typeof PrintessEditor.currentContext.additionalAttachParams["pageCountFormField"] !== "undefined") {
+                    const pageFormField = formFields.filter(x => x.name === PrintessEditor.currentContext.additionalAttachParams["pageCountFormField"]);
                     if (pageFormField && pageFormField.length > 0) {
                         let intValue = PrintessEditor.extractNumber(pageFormField[0].value);
                         if (!isNaN(intValue) && isFinite(intValue)) {
@@ -1176,23 +1276,24 @@ class PrintessSharedTools {
                     }
                 }
             }
-            const iFrame = await this.initializeIFrame(callbacks, context, this.Settings);
+            const iFrame = await this.initializeIFrame(callbacks, this.Settings);
             if (iFrame.getAttribute('data-attached') === "false") {
                 try {
                     const attachParams = {
                         domain: that.Settings.apiDomain,
                         token: this.Settings.shopToken || "",
-                        templateName: context.templateNameOrSaveToken,
+                        templateName: PrintessEditor.currentContext.templateNameOrSaveToken,
                         showBuyerSide: true,
                         templateUserId: '',
-                        basketId: await PrintessEditor.getOrGenerateBasketId(context),
-                        shopUserId: await PrintessEditor.getUserId(context),
+                        basketId: await PrintessEditor.getOrGenerateBasketId(),
+                        shopUserId: await PrintessEditor.getUserId(),
                         formFields: formFields,
                         snippetPriceCategoryLabels: priceInfo && priceInfo.snippetPrices ? priceInfo.snippetPrices : null,
-                        mergeTemplates: mergeTemplates
+                        mergeTemplates: mergeTemplates,
+                        skipExchangeStateApplication: true
                     };
-                    if (typeof context.showSplitterGridSizeButton !== "undefined" && context.showSplitterGridSizeButton !== null) {
-                        attachParams["showSplitterGridSizeButton"] = context.showSplitterGridSizeButton === true || context.showSplitterGridSizeButton === "true";
+                    if (typeof PrintessEditor.currentContext.showSplitterGridSizeButton !== "undefined" && PrintessEditor.currentContext.showSplitterGridSizeButton !== null) {
+                        attachParams["showSplitterGridSizeButton"] = PrintessEditor.currentContext.showSplitterGridSizeButton === true || PrintessEditor.currentContext.showSplitterGridSizeButton === "true";
                     }
                     const globalSettings = PrintessEditor.getGlobalShopSettings();
                     if (typeof globalSettings.getFormFieldProperties === "function") {
@@ -1208,10 +1309,10 @@ class PrintessSharedTools {
                             }
                         }
                     }
-                    if (context.additionalAttachParams) {
-                        for (const prop in context.additionalAttachParams) {
-                            if (context.additionalAttachParams.hasOwnProperty(prop)) {
-                                attachParams[prop] = context.additionalAttachParams[prop];
+                    if (PrintessEditor.currentContext.additionalAttachParams) {
+                        for (const prop in PrintessEditor.currentContext.additionalAttachParams) {
+                            if (PrintessEditor.currentContext.additionalAttachParams.hasOwnProperty(prop)) {
+                                attachParams[prop] = PrintessEditor.currentContext.additionalAttachParams[prop];
                             }
                         }
                     }
@@ -1232,7 +1333,7 @@ class PrintessSharedTools {
             else {
                 let undef;
                 const loadParams = {
-                    templateNameOrToken: context.templateNameOrSaveToken,
+                    templateNameOrToken: PrintessEditor.currentContext.templateNameOrSaveToken,
                     mergeTemplates: mergeTemplates,
                     formFields: formFields,
                     snippetPriceCategoryLabels: priceInfo && priceInfo.snippetPrices ? priceInfo.snippetPrices : null,
@@ -1247,12 +1348,12 @@ class PrintessSharedTools {
                         loadParams.clearExchangeCaches = this.Settings.attachParams.clearExchangeCaches === false ? false : true;
                     }
                 }
-                if (context && context.additionalAttachParams) {
-                    if (context.additionalAttachParams.formFieldProperties) {
-                        loadParams.formFieldProperties = context.additionalAttachParams.formFieldProperties;
+                if (PrintessEditor.currentContext && PrintessEditor.currentContext.additionalAttachParams) {
+                    if (PrintessEditor.currentContext.additionalAttachParams.formFieldProperties) {
+                        loadParams.formFieldProperties = PrintessEditor.currentContext.additionalAttachParams.formFieldProperties;
                     }
-                    if (typeof context.additionalAttachParams.clearExchangeCaches !== "undefined") {
-                        loadParams.clearExchangeCaches = context.additionalAttachParams.clearExchangeCaches === false ? false : true;
+                    if (typeof PrintessEditor.currentContext.additionalAttachParams.clearExchangeCaches !== "undefined") {
+                        loadParams.clearExchangeCaches = PrintessEditor.currentContext.additionalAttachParams.clearExchangeCaches === false ? false : true;
                     }
                 }
                 iFrame.contentWindow.postMessage({
@@ -1283,18 +1384,21 @@ class PrintessSharedTools {
         }
         if (!this.show.saveInterval) {
             this.show.saveInterval = setInterval(function () {
-                if (that.visible && context.currentSaveTimerInMinutes !== null && context.currentSaveTimerInMinutes > 0 && typeof context.onSaveTimer === "function") {
+                if (PrintessEditor.visible && PrintessEditor.currentContext.currentSaveTimerInMinutes !== null && PrintessEditor.currentContext.currentSaveTimerInMinutes > 0 && typeof PrintessEditor.currentContext.onSaveTimer === "function") {
                     const timeDifferenceMs = ((new Date()).getTime() - that.lastSaveDate.getTime());
-                    if (timeDifferenceMs > (context.currentSaveTimerInMinutes * 60000)) {
+                    if (timeDifferenceMs > (PrintessEditor.currentContext.currentSaveTimerInMinutes * 60000)) {
                         that.lastSaveDate = new Date();
-                        context.onSaveTimer();
+                        PrintessEditor.currentContext.onSaveTimer();
                     }
                 }
             }, 30000);
         }
     }
-    hide(context, closeButtonClicked) {
-        this.visible = false;
+    hide(closeButtonClicked) {
+        if (!PrintessEditor.visible) {
+            return;
+        }
+        PrintessEditor.visible = false;
         if (this.usePanelUi()) {
             const editor = this.getPrintessComponent();
             if (editor && editor.editor) {
@@ -1312,8 +1416,8 @@ class PrintessSharedTools {
         if (root && root.length > 0) {
             root[0].classList.remove('printess-editor-open');
         }
-        if (typeof context.editorClosed === "function") {
-            context.editorClosed(closeButtonClicked === true);
+        if (typeof PrintessEditor.currentContext.editorClosed === "function") {
+            PrintessEditor.currentContext.editorClosed(closeButtonClicked === true);
         }
     }
     static getGlobalShopSettings() {
@@ -1351,7 +1455,8 @@ class PrintessSharedTools {
             window[methodName].apply(null, params);
         }
     }
-} function initPrintessEditor(shopToken, editorUrl, editorVersion, startupLogoUrl, showStartupAnimation, theme, startupBackgroundColor = "") {
+}
+PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl, editorVersion, startupLogoUrl, showStartupAnimation, theme, startupBackgroundColor = "") {
     let editorSettings;
     if (shopToken && typeof shopToken !== "string") {
         editorSettings = {
@@ -1388,8 +1493,7 @@ class PrintessSharedTools {
     }
     return new PrintessEditor(editorSettings);
 }
-//# sourceMappingURL=printessEditor.js.map
-; class PrintessShopifyGraphQlApi {
+class PrintessShopifyGraphQlApi {
     constructor(graphQlToken, language = null) {
         this.language = null;
         this.graphQlToken = graphQlToken;
@@ -1759,9 +1863,7 @@ class PrintessSharedTools {
         return ret;
     }
 }
-//# sourceMappingURL=printessShopifyGraphqlApi.js.map
-;
-; class PrintessShopifyCart {
+class PrintessShopifyCart {
     constructor(printessSettings) {
         this.formFieldAsProperties = {};
         this.settings = printessSettings;
@@ -2207,7 +2309,7 @@ class PrintessSharedTools {
                 let mergeTemplates = that.product.mergeTemplates?.value || showSettings.mergeTemplates || null;
                 if (mergeTemplates) {
                     if (typeof mergeTemplates === "string") {
-                        return PrintessShopifyCart.parseMergeTemplates(mergeTemplates);
+                        return PrintessShopifyCart.parseMergeTemplates(mergeTemplates, this.settings.globalMergeModeOverride);
                     }
                     else {
                         return mergeTemplates;
@@ -2578,7 +2680,7 @@ class PrintessSharedTools {
         };
         return context;
     }
-    static parseMergeTemplates(valueString) {
+    static parseMergeTemplates(valueString, globalMergeModeOverride) {
         let ret = null;
         if (!valueString) {
             return ret;
@@ -2587,9 +2689,9 @@ class PrintessSharedTools {
             const json = JSON.parse(valueString);
             if (typeof json === "string") {
                 ret = [{
-                    "templateName": json,
-                    "mergeMode": "layout-snippet-no-repeat"
-                }];
+                        "templateName": json,
+                        "mergeMode": "layout-snippet-no-repeat"
+                    }];
             }
             else {
                 if (!Array.isArray(json)) {
@@ -2602,14 +2704,21 @@ class PrintessSharedTools {
         }
         catch (e) {
             ret = [{
-                "templateName": valueString,
-                "mergeMode": "layout-snippet-no-repeat"
-            }];
+                    "templateName": valueString,
+                    "mergeMode": "layout-snippet-no-repeat"
+                }];
         }
         if (ret) {
             ret.forEach((x) => {
-                if (!x.mergeMode) {
-                    x.mergeMode = "layout-snippet-no-repeat";
+                if (globalMergeModeOverride) {
+                    if (x) {
+                        x.mergeMode = globalMergeModeOverride;
+                    }
+                }
+                else {
+                    if (!x.mergeMode) {
+                        x.mergeMode = "layout-snippet-no-repeat";
+                    }
                 }
             });
         }
@@ -2841,12 +2950,12 @@ class PrintessSharedTools {
                     "tableName": names.tableName,
                     "quantityColumnName": names.quantityColumn,
                     "variants": [{
-                        "quantity": quantity,
-                        "values": {
-                            ...this.basketItemOptions,
-                            ...this.basketItemVariantOptions
-                        }
-                    }]
+                            "quantity": quantity,
+                            "values": {
+                                ...this.basketItemOptions,
+                                ...this.basketItemVariantOptions
+                            }
+                        }]
                 };
             }
         }
@@ -2992,9 +3101,6 @@ class PrintessSharedTools {
         }
     }
 }
-//# sourceMappingURL=printessShopifyCart.js.map
-;
-;
 const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketItem = false, addToBasketDirect = false) => {
     const showMethodName1 = "openPrintessEditor" + itemId;
     const showMethodName2 = "showPrintessEditor" + itemId;
@@ -3634,9 +3740,9 @@ const initPrintessShopifyEditor = (printessSettings) => {
                             "tableName": names.tableName,
                             "quantityColumnName": names.quantityColumn,
                             "variants": [{
-                                "quantity": quantity,
-                                "values": currentValues
-                            }]
+                                    "quantity": quantity,
+                                    "values": currentValues
+                                }]
                         };
                     }
                 }
@@ -3721,8 +3827,8 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     templateName: shopContext.templateNameOrSaveToken,
                     usePublishedVersion: true,
                     shopInfo: {
-                        basketId: await PrintessEditor.getOrGenerateBasketId(shopContext),
-                        userId: await PrintessEditor.getUserId(shopContext),
+                        basketId: await PrintessEditor.getOrGenerateBasketId(),
+                        userId: await PrintessEditor.getUserId(),
                     }
                 };
                 const result = await PrintessSharedTools.createSaveToken(printessSettings.shopToken, params);
@@ -3873,9 +3979,16 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     getMergeTemplates: () => {
                         if (settings.mergeTemplates) {
                             if (typeof settings.mergeTemplates === "string") {
-                                return editor.parseMergeTemplates(settings.mergeTemplates);
+                                return editor.parseMergeTemplates(settings.mergeTemplates, printessSettings.globalMergeModeOverwrite);
                             }
                             else {
+                                if (printessSettings.globalMergeModeOverwrite) {
+                                    settings.mergeTemplates.forEach((mergeTemplate) => {
+                                        if (mergeTemplate) {
+                                            mergeTemplate.mergeMode = printessSettings.globalMergeModeOverwrite;
+                                        }
+                                    });
+                                }
                                 return settings.mergeTemplates;
                             }
                         }
@@ -4229,7 +4342,7 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 }
                 return context;
             },
-            parseMergeTemplates: (valueString) => {
+            parseMergeTemplates: (valueString, globalMergeModeOverride) => {
                 let ret = null;
                 if (!valueString) {
                     return ret;
@@ -4238,9 +4351,9 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     const json = JSON.parse(valueString);
                     if (typeof json === "string") {
                         ret = [{
-                            "templateName": json,
-                            "mergeMode": "layout-snippet-no-repeat"
-                        }];
+                                "templateName": json,
+                                "mergeMode": "layout-snippet-no-repeat"
+                            }];
                     }
                     else {
                         if (!Array.isArray(json)) {
@@ -4253,14 +4366,19 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 }
                 catch (e) {
                     ret = [{
-                        "templateName": valueString,
-                        "mergeMode": "layout-snippet-no-repeat"
-                    }];
+                            "templateName": valueString,
+                            "mergeMode": "layout-snippet-no-repeat"
+                        }];
                 }
                 if (ret) {
                     ret.forEach((x) => {
-                        if (!x.mergeMode) {
-                            x.mergeMode = "layout-snippet-no-repeat";
+                        if (globalMergeModeOverride) {
+                            x.mergeMode = globalMergeModeOverride;
+                        }
+                        else {
+                            if (!x.mergeMode) {
+                                x.mergeMode = "layout-snippet-no-repeat";
+                            }
                         }
                     });
                 }
@@ -4815,14 +4933,15 @@ const initPrintessShopifyEditor = (printessSettings) => {
     return window["printessShopifyEditor"];
 };
 class PrintessShopifyDirectAddToBasket {
-    static addToBasketDirect(jsReference, shopToken, templateName, productId, mergeTemplates, printTemplateName, autoOpenCartView) {
+    static addToBasketDirect(jsReference, shopToken, templateName, productId, mergeTemplates, printTemplateName, autoOpenCartView, globalMergeModeOverwrite) {
         return PrintessShopifyDirectAddToBasket.addToBasket({
             shopToken: shopToken,
             templateName: templateName,
             productId: productId,
             mergeTemplates: mergeTemplates,
             printTemplateName: printTemplateName,
-            autoOpenCart: autoOpenCartView
+            autoOpenCart: autoOpenCartView,
+            globalMergeModeOverwrite: globalMergeModeOverwrite
         });
     }
     static async addToBasket(settings) {
@@ -4832,7 +4951,7 @@ class PrintessShopifyDirectAddToBasket {
         if (!settings.templateName) {
             throw "No Printess template name provided!";
         }
-        const mergeTemplates = settings.mergeTemplates ? PrintessSharedTools.parseMergeTemplate(settings.mergeTemplates) : null;
+        const mergeTemplates = settings.mergeTemplates ? PrintessSharedTools.parseMergeTemplate(settings.mergeTemplates, settings.globalMergeModeOverwrite) : null;
         const saveToken = await PrintessSharedTools.createSaveToken(settings.shopToken, {
             templateName: settings.templateName,
             formFields: settings.formFields ? settings.formFields : null,
@@ -4840,7 +4959,7 @@ class PrintessShopifyDirectAddToBasket {
             usePublishedVersion: true,
             shopInfo: {
                 userId: settings.userId || "",
-                basketId: settings.basketId ? settings.basketId : await PrintessEditor.getOrGenerateBasketId(null)
+                basketId: settings.basketId ? settings.basketId : await PrintessEditor.getOrGenerateBasketId()
             }
         });
         const basketItemProperties = {
@@ -4887,26 +5006,11 @@ class PrintessShopifyDirectAddToBasket {
             window.location.replace('/cart');
         }
         else {
-            //Try to open cart drawer
-            let cartDrawer = document.querySelector("cart-drawer");
-            if (!cartDrawer) {
-                cartDrawer = document.createElement("cart-drawer");
-                cartDrawer.classList.add("drawer");
-                const child = document.createElement("div");
-                child.setAttribute("id", "cart-drawer");
-                cartDrawer.appendChild(child);
-                document.body.appendChild(cartDrawer);
-            }
-            if (cartDrawer && typeof cartDrawer["open"] === "function") {
-                cartDrawer["open"]();
-            }
         }
         return;
     }
 }
-//# sourceMappingURL=printessShopify.js.map
-;
-; class PrintessShopifyCartVariantSwitcher {
+class PrintessShopifyCartVariantSwitcher {
     constructor(settings) {
         this._settings = settings;
         document.querySelectorAll(".printess_cart_variant_switcher").forEach(x => this.addBasketItem(x));
@@ -5022,10 +5126,10 @@ class PrintessShopifyDirectAddToBasket {
             },
             body: JSON.stringify({
                 items: [{
-                    id: newVariant.id || newProductId,
-                    quantity: 1,
-                    properties: properties
-                }]
+                        id: newVariant.id || newProductId,
+                        quantity: 1,
+                        properties: properties
+                    }]
             })
         });
         if (!result.ok) {
@@ -5096,5 +5200,3 @@ class PrintessShopifyDirectAddToBasket {
     }
 }
 PrintessShopifyCartVariantSwitcher._productCache = {};
-;
-//# sourceMappingURL=PrintessShopifyCartVariantSwitcher.js.map
