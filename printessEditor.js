@@ -279,7 +279,10 @@ class PrintessSharedTools {
         return ret;
     }
 }
-class PrintessEditor {
+;
+;
+;
+;class PrintessEditor {
     constructor(settings) {
         this.lastSaveDate = new Date();
         this.calculateCurrentPrices = async (priceInfo) => {
@@ -743,6 +746,9 @@ class PrintessEditor {
         try {
             let priceInfo = null;
             try {
+                if (typeof priceChangedInfo.pureRecordsCount !== undefined && priceChangedInfo.pureRecordsCount != null && priceChangedInfo.pureRecordsCount > 0) {
+                    PrintessEditor.currentContext.currentRecordCount = priceChangedInfo.pureRecordsCount;
+                }
                 if (typeof priceChangedInfo.pageCount !== "undefined") {
                     if (PrintessEditor.currentContext.currentPageCount !== priceChangedInfo.pageCount) {
                         PrintessEditor.currentContext.currentPageCount = priceChangedInfo.pageCount;
@@ -1055,9 +1061,9 @@ class PrintessEditor {
                 token: that.Settings.shopToken,
                 templateName: PrintessEditor.currentContext.templateNameOrSaveToken, // "Premier Test-3",// "test Trigger Dialog",  // "price-tester", // "Premier Test", //  "Children's book", // "Label FF Test", //"test Trigger Dialog",   "test Trigger Dialog", // "Bathrobe Man", //
                 //templateVersion: "publish",//"draft"
-                translationKey: "auto", //"en"
+                translationKey: that.Settings.translationKey || "auto", //"en"
                 basketId: await PrintessEditor.getOrGenerateBasketId(),
-                shopUserId: await PrintessEditor.getUserId(),
+                shopUserId: "" + (await PrintessEditor.getUserId()),
                 // mobileMargin: {left: 20, right: 40, top: 30, bottom: 40},
                 // allowZoomAndPan: false,
                 snippetPriceCategoryLabels: priceInfo && priceInfo.snippetPrices ? priceInfo.snippetPrices : null,
@@ -1290,7 +1296,8 @@ class PrintessEditor {
                         formFields: formFields,
                         snippetPriceCategoryLabels: priceInfo && priceInfo.snippetPrices ? priceInfo.snippetPrices : null,
                         mergeTemplates: mergeTemplates,
-                        skipExchangeStateApplication: true
+                        skipExchangeStateApplication: true,
+                        translationKey: that.Settings.translationKey || "auto", //"en"
                     };
                     if (typeof PrintessEditor.currentContext.showSplitterGridSizeButton !== "undefined" && PrintessEditor.currentContext.showSplitterGridSizeButton !== null) {
                         attachParams["showSplitterGridSizeButton"] = PrintessEditor.currentContext.showSplitterGridSizeButton === true || PrintessEditor.currentContext.showSplitterGridSizeButton === "true";
@@ -1466,6 +1473,7 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
             editorVersion: shopToken["editorVersion"] ? shopToken["editorVersion"] : "",
             attachParams: shopToken["attachParams"] ? shopToken["attachParams"] : "",
             showAlertOnTabClose: typeof shopToken["showTabClosingAlert"] !== "undefined" && shopToken["showTabClosingAlert"] !== null ? shopToken["showTabClosingAlert"] === true : false,
+            translationKey: shopToken["translationKey"] ? shopToken["translationKey"] : "",
             uiSettings: {
                 showStartupAnimation: typeof shopToken["showStartupAnimation"] !== "undefined" && shopToken["showStartupAnimation"] !== null ? shopToken["showStartupAnimation"] === true : true,
                 startupBackgroundColor: shopToken["startupBackgroundColor"] || "#ffffff",
@@ -1493,7 +1501,7 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
     }
     return new PrintessEditor(editorSettings);
 }
-class PrintessShopifyGraphQlApi {
+;class PrintessShopifyGraphQlApi {
     constructor(graphQlToken, language = null) {
         this.language = null;
         this.graphQlToken = graphQlToken;
@@ -1863,7 +1871,8 @@ class PrintessShopifyGraphQlApi {
         return ret;
     }
 }
-class PrintessShopifyCart {
+;
+;class PrintessShopifyCart {
     constructor(printessSettings) {
         this.formFieldAsProperties = {};
         this.settings = printessSettings;
@@ -3101,6 +3110,8 @@ class PrintessShopifyCart {
         }
     }
 }
+;
+;
 const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketItem = false, addToBasketDirect = false) => {
     const showMethodName1 = "openPrintessEditor" + itemId;
     const showMethodName2 = "showPrintessEditor" + itemId;
@@ -5010,7 +5021,8 @@ class PrintessShopifyDirectAddToBasket {
         return;
     }
 }
-class PrintessShopifyCartVariantSwitcher {
+;
+;class PrintessShopifyCartVariantSwitcher {
     constructor(settings) {
         this._settings = settings;
         document.querySelectorAll(".printess_cart_variant_switcher").forEach(x => this.addBasketItem(x));
@@ -5200,3 +5212,4 @@ class PrintessShopifyCartVariantSwitcher {
     }
 }
 PrintessShopifyCartVariantSwitcher._productCache = {};
+;

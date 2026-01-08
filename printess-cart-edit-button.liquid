@@ -28,6 +28,8 @@
   - shopUserId: { String } The current logged in user id, must be unique over all shop users
   - autoImportUserImages: { Boolean } Autoimports all images that have been uploaded by the current user
   - graphQlLanguage: { String } The language that should be used to get product option names and values
+  - globalMergeModeOverwrite: {String} Overwrite the merge template merge mode for all merge templates
+  - translationKey: {String} Set a fixed language to the editor
   Usage:
   {% render 'printess-cart-edit-button',
     item: item,
@@ -51,7 +53,9 @@
     quantitySelector: "",
     cartItemParentSelector: "",
     circulationTableRecordCountText: "{NUMBER} Records",
-    graphQlLanguage: "auto"
+    graphQlLanguage: "auto",
+    globalMergeModeOverwrite: "merge",
+    translationKey: "de"
   %}
 {% endcomment %}
 
@@ -60,7 +64,7 @@
   function getPrintessEditor() {
     if(!getPrintessEditor.editor) {
       getPrintessEditor.editor = new PrintessShopifyCart({ displayProductName: !({{showProductName | json}} === false),
-                                                                                                                shopToken: "{{ shopToken }}",
+                                                                                                                "shopToken": "{{ shopToken }}",
                                                                                                                 "startupLogoUrl": "{{ startupLogoUrl }}",
                                                                                                                 "showStartupAnimation": {{ showStartupAnimation }},
                                                                                                                 "hidePricesInEditor": {{ hidePricesInEditor }},
@@ -72,7 +76,9 @@
                                                                                                                 "basketId": {% if basketId != blank %}{{ basketId | json }}{% else %}null{% endif %},
                                                                                                                 "shopUserId": {% if shopUserId != blank %}{{ shopUserId | json }}{% else %}null{% endif %},
                                                                                                                 "autoImportUserImages": {{ autoImportUserImages | json }} === true,
-                                                                                                                "graphQlLanguage": {% if graphQlLanguage != blank %} {% if graphQlLanguage == 'auto' %}{{ localization.language.iso_code | json }}{%else%}{{ graphQlLanguage | json}}{%endif%}{% else %}null{%endif%}
+                                                                                                                "graphQlLanguage": {% if graphQlLanguage != blank %} {% if graphQlLanguage == 'auto' %}{{ localization.language.iso_code | json }}{%else%}{{ graphQlLanguage | json}}{%endif%}{% else %}null{%endif%},
+                                                                                                                "globalMergeModeOverwrite": "{{ globalMergeModeOverwrite }}" || "",
+                                                                                                                "translationKey": "{{ translationKey }}" || ""
                                                                                                               });
     }
 

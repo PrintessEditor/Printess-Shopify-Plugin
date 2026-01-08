@@ -18,6 +18,7 @@
   - duplicateAndPersonalizeText: {String} Will show a duplicate & personalize link that enables the customer to open the current basket item, modify it and add it as a second
   - graphQlToken: {String}: The App Access Token for the Graphql Api
   - forceCartItemCleanup: {Boolean}: Forces the cleanup of cart items that have noot been deleted correctly due to other scripts
+  - globalMergeModeOverwrite: {String} Overwrite the merge template merge mode for all merge templates
   Usage:
   {% render 'printess-cart-edit-button',
     shopToken: "",
@@ -34,7 +35,8 @@
     additionalAttachParams: {},
     duplicateAndPersonalizeText: "",
     graphQlToken: "",
-    forceCartItemCleanup: false
+    forceCartItemCleanup: false,
+    globalMergeModeOverwrite: "merge"
   %}
 {% endcomment %}
 
@@ -51,7 +53,8 @@
                                                                                                                 "editorVersion": {{ editorVersion | json }},
                                                                                                                 "showAlertOnTabClose": {{showAlertOnTabClose | json}} === true,
                                                                                                                 "startupBackgroundColor": "{{startupBackgroundColor}}" || "#000000",
-                                                                                                                "graphQlToken": {{graphQlToken | json}} || ""
+                                                                                                                "graphQlToken": {{graphQlToken | json}} || "",
+                                                                                                                "globalMergeModeOverwrite": "{{ globalMergeModeOverwrite }}" || ""
                                                                                                               });
             }
 

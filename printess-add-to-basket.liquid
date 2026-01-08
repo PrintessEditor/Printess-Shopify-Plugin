@@ -28,9 +28,11 @@
     - shopUserId: { String } The current logged in user id, must be unique over all shop users
     - autoImportUserImages: { Boolean } Autoimports all images that have been uploaded by the current user
     - printTemplateName: {String} The name of the Print Settings that should be used to produce this product
-    - hasDirectAddToBasketButton {Boolean} Add a second button that allows adding to basket without opening the editor
-    - directAddToBasketButtonLabel {String} The label for the second add to basket button
-    - formFieldsAsProperties {String} Comma seperated list of form field names whose values should be added to the basket property display
+    - hasDirectAddToBasketButton: {Boolean} Add a second button that allows adding to basket without opening the editor
+    - directAddToBasketButtonLabel: {String} The label for the second add to basket button
+    - formFieldsAsProperties: {String} Comma seperated list of form field names whose values should be added to the basket property display
+    - globalMergeModeOverwrite: {String} Overwrite the merge template merge mode for all merge templates
+    - translationKey: {String} Set a fixed language to the editor
     Usage:
     {% render 'printess-add-to-basket',
       product: product,
@@ -60,7 +62,10 @@
       printTemplateName: "",
       hasDirectAddToBasketButton: true,
       directAddToBasketButtonLabel: "Add to basket",
-      formFieldsAsProperties: "formField1"
+      formFieldsAsProperties: "formField1",
+      globalMergeModeOverwrite: "merge",
+      translationKey: "de"
+
     %}
 {% endcomment %}
 
@@ -326,7 +331,9 @@ document.addEventListener("DOMContentLoaded", function() {
                                                                                                     "uiVersion": {% if product.metafields.printess.uiVersion != blank %} {{ product.metafields.printess.uiVersion | json }} {% else %} "PanelUi" {% endif %},
                                                                                                     "basketId": {% if basketId != blank %}{{ basketId | json }}{% else %}null{% endif %},
                                                                                                     "shopUserId": {% if shopUserId != blank %}{{ shopUserId | json }}{% else %}null{% endif %},
-                                                                                                    "autoImportUserImages": {{ autoImportUserImages | json }} === true
+                                                                                                    "autoImportUserImages": {{ autoImportUserImages | json }} === true,
+                                                                                                    "globalMergeModeOverwrite": "{{ globalMergeModeOverwrite }}" || "",
+                                                                                                    "translationKey": "{{ translationKey }}" || ""
                                                                                                   }) : null;
       let templateName = {{ printessTemplateName | json }};
       const product = {{ product | json }};
