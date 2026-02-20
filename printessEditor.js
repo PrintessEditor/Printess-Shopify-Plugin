@@ -282,7 +282,7 @@ class PrintessSharedTools {
 ;
 ;
 ;
-;class PrintessEditor {
+class PrintessEditor {
     constructor(settings) {
         this.lastSaveDate = new Date();
         this.calculateCurrentPrices = async (priceInfo) => {
@@ -1501,6 +1501,7 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
     }
     return new PrintessEditor(editorSettings);
 }
+
 ;class PrintessShopifyGraphQlApi {
     constructor(graphQlToken, language = null) {
         this.language = null;
@@ -4323,6 +4324,21 @@ const initPrintessShopifyEditor = (printessSettings) => {
                                 "printessUnpersonalizedEditing" + settings.product.id
                             ], "");
                         }
+                    },
+                    onAllowAddToBasketAsync: async (saveToken, thumbnailUrl) => {
+                        const globalShopConfig = PrintessEditor.getGlobalShopSettings();
+                        if (typeof globalShopConfig.onAllowAddToBasket === "function") {
+                            try {
+                                return Promise.resolve(globalShopConfig.onAllowAddToBasket(saveToken, thumbnailUrl) === true);
+                            }
+                            catch (e) {
+                                console.error(e);
+                            }
+                        }
+                        else if (typeof globalShopConfig.onAllowAddToBasketAsync === "function") {
+                            return (await globalShopConfig.onAllowAddToBasketAsync(saveToken, thumbnailUrl)) === true;
+                        }
+                        return Promise.resolve(true);
                     },
                     propertyChanged: (propertyName, propertyValue) => {
                         switch (propertyName) {
