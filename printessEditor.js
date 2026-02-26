@@ -873,6 +873,22 @@ class PrintessEditor {
             iframe.contentWindow?.postMessage({ cmd: "importImages", parameters: [userId || "", basketId] }, "*");
         }
     }
+    setFormFieldValueOnClassicEditor(iframe, formFieldName, formFieldValue) {
+        const formFields = {};
+        formFields[formFieldName] = formFieldValue;
+        const mappedFormFields = PrintessEditor.applyFormFieldMappings(formFields, PrintessEditor.currentContext.getFormFieldMappings());
+        if (mappedFormFields.length > 0) {
+            iframe.contentWindow?.postMessage({ cmd: "setFormFieldValue", parameters: [mappedFormFields[0].name, mappedFormFields[0].value] }, "*");
+        }
+    }
+    setFormFieldValueOnBcUi(editor, formFieldName, formFieldValue) {
+        const formFields = {};
+        formFields[formFieldName] = formFieldValue;
+        const mappedFormFields = PrintessEditor.applyFormFieldMappings(formFields, PrintessEditor.currentContext.getFormFieldMappings());
+        if (mappedFormFields.length > 0) {
+            editor.api.setFormFieldValue(mappedFormFields[0].name, mappedFormFields[0].value);
+        }
+    }
     static generateUUID() {
         var d = new Date().getTime(); //Timestamp
         var d2 = ((typeof performance !== 'undefined') && performance.now && (performance.now() * 1000)) || 0; //Time in microseconds since page-load or 0 if unsupported
@@ -1263,6 +1279,12 @@ class PrintessEditor {
         };
         if (this.usePanelUi()) {
             that.showBcUiVersion(callbacks);
+            let printessComponent = that.getPrintessComponent();
+            if (printessComponent) {
+                shopContext.setFormFieldValue = (formFieldName, formFieldValue) => {
+                    that.setFormFieldValueOnBcUi(printessComponent.editor, formFieldName, formFieldValue);
+                };
+            }
         }
         else {
             const priceInfo = PrintessEditor.currentContext.getPriceInfo();
@@ -1367,6 +1389,9 @@ class PrintessEditor {
                     cmd: "loadTemplateAndFormFields",
                     parameters: [loadParams.templateNameOrToken, loadParams.mergeTemplates, loadParams.formFields, loadParams.snippetPriceCategoryLabels, loadParams.formFieldProperties, loadParams.clearExchangeCaches]
                 }, '*');
+                shopContext.setFormFieldValue = (formFieldName, formFieldValue) => {
+                    that.setFormFieldValueOnClassicEditor(iFrame, formFieldName, formFieldValue);
+                };
                 setTimeout(function () { iFrame.contentWindow.focus(); }, 0);
                 if (!isSaveToken && pageCount !== null && pageCount > 0) {
                     setTimeout(function () {
@@ -2291,6 +2316,55 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
         }
         window.location.replace('/cart');
     }
+    mapFormFieldToProductOption(product, formFieldName, formFieldValue, formFieldLabel = null, valueLabel = null) {
+        if (product && product.productOptions) {
+            let productOption = product.productOptions.find((x) => {
+                return x.name === formFieldName;
+            });
+            if (!productOption && typeof formFieldLabel == "string") {
+                productOption = product.productOptions.find((x) => {
+                    return x.name === formFieldLabel;
+                });
+            }
+            if (!productOption) {
+                productOption = product.productOptions.find((x) => {
+                    return (x.name || "").toLowerCase() === formFieldName.toLowerCase();
+                });
+            }
+            if (!productOption && typeof formFieldLabel == "string") {
+                productOption = product.productOptions.find((x) => {
+                    return (x.name || "").toLowerCase() === formFieldLabel.toLowerCase();
+                });
+            }
+            if (productOption && productOption.optionValues) {
+                let optionValue = productOption.optionValues.find((x) => {
+                    return x.name === formFieldValue;
+                });
+                if (!optionValue && typeof valueLabel === "string") {
+                    optionValue = productOption.optionValues.find((x) => {
+                        return x.name === valueLabel;
+                    });
+                }
+                if (!optionValue) {
+                    optionValue = productOption.optionValues.find((x) => {
+                        return (x.name || "").toLowerCase() === formFieldValue.toLowerCase();
+                    });
+                }
+                if (!optionValue && typeof valueLabel === "string") {
+                    optionValue = productOption.optionValues.find((x) => {
+                        return (x.name || "").toLowerCase() === valueLabel.toLowerCase();
+                    });
+                }
+                if (optionValue) {
+                    return {
+                        name: productOption.name,
+                        value: optionValue.name
+                    };
+                }
+            }
+        }
+        return null;
+    }
     createShopContext(showSettings) {
         const that = this;
         const conf = PrintessEditor && PrintessEditor.getGlobalShopSettings ? PrintessEditor.getGlobalShopSettings() : {};
@@ -2385,11 +2459,17 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
                     }
                     return;
                 }
-                if (typeof that.formFieldAsProperties[formField] !== "undefined") {
-                    that.formFieldAsProperties[formField] = valueLabel || value || "";
+                const productOption = that.mapFormFieldToProductOption(that.product, formField, value, formFieldLabel, valueLabel);
+                if (productOption) {
+                    that.formFieldAsProperties[productOption.name] = productOption.value;
                 }
-                else if (typeof that.formFieldAsProperties[formFieldLabel] !== "undefined") {
-                    that.formFieldAsProperties[formFieldLabel] = valueLabel || value || "";
+                else {
+                    if (typeof that.formFieldAsProperties[formField] !== "undefined") {
+                        that.formFieldAsProperties[formField] = valueLabel || value || "";
+                    }
+                    else if (typeof that.formFieldAsProperties[formFieldLabel] !== "undefined") {
+                        that.formFieldAsProperties[formFieldLabel] = valueLabel || value || "";
+                    }
                 }
                 if (that.basketItemVariantOptions) {
                     for (const itemName in that.basketItemVariantOptions) {
@@ -3011,6 +3091,17 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
         else if (typeof initPrintessEditor === "function") {
             const editor = initPrintessEditor(this.settings);
             editor.show(context);
+        }
+        if (this.cartItemConfig.additionalSettings && this.cartItemConfig.additionalSettings["printQtyOption"]) {
+            const quantity = showSettings.basketItemOptions[this.cartItemConfig.additionalSettings["printQtyOption"]];
+            if (typeof quantity !== "undefined") {
+                const quantityNumber = PrintessEditor.extractNumber(quantity);
+                if (!isNaN(quantityNumber) && isFinite(quantityNumber)) {
+                    if (typeof context.setFormFieldValue === "function") {
+                        context.setFormFieldValue(this.cartItemConfig.additionalSettings["printQtyOption"], quantityNumber.toString());
+                    }
+                }
+            }
         }
     }
     static async deleteUndeletedBasketItem() {
