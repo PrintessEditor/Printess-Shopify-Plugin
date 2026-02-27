@@ -1284,7 +1284,7 @@ class PrintessEditor {
             that.save(callbacks);
         };
         if (this.usePanelUi()) {
-            that.showBcUiVersion(shopContext, callbacks);
+            await that.showBcUiVersion(shopContext, callbacks);
         }
         else {
             const priceInfo = PrintessEditor.currentContext.getPriceInfo();
@@ -1425,6 +1425,7 @@ class PrintessEditor {
                 }
             }, 30000);
         }
+        return true;
     }
     hide(closeButtonClicked) {
         if (!PrintessEditor.visible) {
@@ -3086,11 +3087,11 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
         }
         if (typeof window["initPrintessEditor"] === "function") {
             const editor = window["initPrintessEditor"](this.settings);
-            editor.show(context);
+            await editor.show(context);
         }
         else if (typeof initPrintessEditor === "function") {
             const editor = initPrintessEditor(this.settings);
-            editor.show(context);
+            await editor.show(context);
         }
         if (this.cartItemConfig.additionalSettings && this.cartItemConfig.additionalSettings["printQtyOption"]) {
             const quantity = showSettings.basketItemOptions[this.cartItemConfig.additionalSettings["printQtyOption"]];
