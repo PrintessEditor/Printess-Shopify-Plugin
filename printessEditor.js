@@ -971,7 +971,7 @@ class PrintessEditor {
             }
         });
     }
-    async showBcUiVersion(callbacks) {
+    async showBcUiVersion(context, callbacks) {
         const that = this;
         const priceInfo = PrintessEditor.currentContext.getPriceInfo();
         let isSaveToken = PrintessEditor.currentContext.templateNameOrSaveToken && PrintessEditor.currentContext.templateNameOrSaveToken.indexOf("st:") === 0;
@@ -1019,6 +1019,9 @@ class PrintessEditor {
         if (printessComponent && printessComponent.editor) {
             printessComponent.style.display = "block";
             await printessComponent.editor.api.loadTemplateAndFormFields(PrintessEditor.currentContext.templateNameOrSaveToken, mergeTemplates, formFields, null, null, true);
+            context.setFormFieldValue = (formFieldName, formFieldValue) => {
+                that.setFormFieldValueOnBcUi(printessComponent.editor, formFieldName, formFieldValue);
+            };
             if (!isSaveToken && pageCount !== null && pageCount > 0) {
                 await printessComponent.editor.api.setBookInsidePages(pageCount);
             }
@@ -1157,6 +1160,9 @@ class PrintessEditor {
             const printess = await printessLoader.load(attachParams);
             printessComponent = that.getPrintessComponent();
             printessComponent.editor = printess;
+            context.setFormFieldValue = (formFieldName, formFieldValue) => {
+                that.setFormFieldValueOnBcUi(printessComponent.editor, formFieldName, formFieldValue);
+            };
             setTimeout(async function () {
                 const printessComponent = that.getPrintessComponent();
                 if (!printessComponent) {
@@ -1278,13 +1284,7 @@ class PrintessEditor {
             that.save(callbacks);
         };
         if (this.usePanelUi()) {
-            that.showBcUiVersion(callbacks);
-            let printessComponent = that.getPrintessComponent();
-            if (printessComponent) {
-                shopContext.setFormFieldValue = (formFieldName, formFieldValue) => {
-                    that.setFormFieldValueOnBcUi(printessComponent.editor, formFieldName, formFieldValue);
-                };
-            }
+            that.showBcUiVersion(shopContext, callbacks);
         }
         else {
             const priceInfo = PrintessEditor.currentContext.getPriceInfo();
