@@ -1,0 +1,14 @@
+{% comment %}
+    Renders the Printess cart item code
+    Version 2.0
+
+    Accepts:
+      cartItem: { Object } The current theme liquid cart item object
+
+    Usage:
+    {% render 'printess-cart',
+      cartItem: item
+    %}
+{% endcomment %}
+
+<button type="button" class="printess-cart-integration-button printess-hidden" data-cart-item='{{cartItem | json | replace: "'", '&apos;'}}'></button>
