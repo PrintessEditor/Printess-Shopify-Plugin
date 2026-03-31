@@ -4267,6 +4267,10 @@ const initPrintessShopifyEditor = (printessSettings) => {
                         }
                     },
                     onAddToBasket: (saveToken, thumbnailUrl) => {
+                        if(!saveToken) {
+                          return;
+                        }
+
                         const isSave = typeof settings.basketItemId !== "undefined";
                         if (editor.originalSaveToken) {
                             if (!settings.additionalLineItemProperties) {
