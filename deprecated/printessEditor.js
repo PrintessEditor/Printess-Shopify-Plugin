@@ -135,7 +135,7 @@ class PrintessSharedTools {
         const ret = {};
         PrintessSharedTools.forEach(items, (value, index, arr, key) => {
             if (callback(value, items, key, index) === true) {
-                ret[key] = value;
+                ret[key || ""] = value;
             }
         });
         return ret;
@@ -145,7 +145,7 @@ class PrintessSharedTools {
         PrintessSharedTools.forEach(items, (value, index, arr, key) => {
             if (callback(value, items, key, index) === true) {
                 ret.push({
-                    key: key,
+                    key: key || "",
                     value: value
                 });
             }
@@ -239,7 +239,7 @@ class PrintessSharedTools {
         });
     }
     static getFileNameFromUrl(fileName) {
-        return (fileName || "").split('#')[0].split('?')[0].split('/').pop();
+        return (fileName || "").split('#')[0].split('?')[0].split('/').pop() || "";
     }
     static async downloadImages(images) {
         const ret = [];
@@ -279,10 +279,11 @@ class PrintessSharedTools {
         return ret;
     }
 }
+
 ;
 ;
 ;
-class PrintessEditor {
+;class PrintessEditor {
     constructor(settings) {
         this.lastSaveDate = new Date();
         this.calculateCurrentPrices = async (priceInfo) => {
@@ -1673,6 +1674,9 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
                         },
                         theme: metafield(namespace: "printess", key: "theme") {
                             value
+                        },
+                        settings: metafield(namespace: "printess", key: "settings") {
+                            value
                         }
                     }
                 }`,
@@ -1898,6 +1902,7 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
         return ret;
     }
 }
+
 ;
 ;class PrintessShopifyCart {
     constructor(printessSettings) {
@@ -2370,6 +2375,16 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
         const that = this;
         const conf = PrintessEditor && PrintessEditor.getGlobalShopSettings ? PrintessEditor.getGlobalShopSettings() : {};
         const attachParams = showSettings.additionalAttachParams ? showSettings.additionalAttachParams : {};
+        if (this.product && this.product.settings && this.product.settings.value) {
+            try {
+                const productSettings = JSON.parse(this.product.settings.value);
+                if (productSettings && productSettings.pageCountFormField) {
+                    attachParams["pageCountFormField"] = productSettings.pageCountFormField;
+                }
+            }
+            catch (e) {
+            }
+        }
         const context = {
             templateNameOrSaveToken: that.cartItemConfig.templateNameOrSaveToken,
             stickers: [],
@@ -3203,6 +3218,7 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
         }
     }
 }
+
 ;
 ;
 const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketItem = false, addToBasketDirect = false) => {
@@ -3371,6 +3387,55 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     }
                 }
                 return value;
+            },
+            mapFormFieldToProductOption(product, formFieldName, formFieldValue, formFieldLabel = null, valueLabel = null) {
+                if (product && product.options) {
+                    let productOption = product.optionDetails.find((x) => {
+                        return x.name === formFieldName;
+                    });
+                    if (!productOption && typeof formFieldLabel == "string") {
+                        productOption = product.optionDetails.find((x) => {
+                            return x.name === formFieldLabel;
+                        });
+                    }
+                    if (!productOption) {
+                        productOption = product.optionDetails.find((x) => {
+                            return (x.name || "").toLowerCase() === formFieldName.toLowerCase();
+                        });
+                    }
+                    if (!productOption && typeof formFieldLabel == "string") {
+                        productOption = product.optionDetails.find((x) => {
+                            return (x.name || "").toLowerCase() === formFieldLabel.toLowerCase();
+                        });
+                    }
+                    if (productOption && productOption.values) {
+                        let optionValue = productOption.values.find((x) => {
+                            return x.name === formFieldValue;
+                        });
+                        if (!optionValue && typeof valueLabel === "string") {
+                            optionValue = productOption.values.find((x) => {
+                                return x.name === valueLabel;
+                            });
+                        }
+                        if (!optionValue) {
+                            optionValue = productOption.values.find((x) => {
+                                return (x.name || "").toLowerCase() === formFieldValue.toLowerCase();
+                            });
+                        }
+                        if (!optionValue && typeof valueLabel === "string") {
+                            optionValue = productOption.values.find((x) => {
+                                return (x.name || "").toLowerCase() === valueLabel.toLowerCase();
+                            });
+                        }
+                        if (optionValue) {
+                            return {
+                                name: productOption.name,
+                                value: optionValue.name
+                            };
+                        }
+                    }
+                }
+                return null;
             },
             getInputs() {
                 const ret = [];
@@ -3587,10 +3652,12 @@ const initPrintessShopifyEditor = (printessSettings) => {
                     }
                 }
                 if (variants.length === 0 && !returnDefaultVariantOnFail) {
+                    console.warn("No variant found for options: " + JSON.stringify(formFields));
                     return null;
                 }
                 else {
                     if (variants.length === 0) {
+                        console.warn("No variant found for options: " + JSON.stringify(formFields));
                         return product.variants[0];
                     }
                     return variants[0];
@@ -3751,17 +3818,33 @@ const initPrintessShopifyEditor = (printessSettings) => {
                 if (!settings.basketItemOptions) {
                     settings.basketItemOptions = {};
                 }
-                const formFieldName = !useFallback ? formField : formFieldLabel;
-                const formFieldValue = !useFallback ? value : valueLabel || value;
-                if (typeof settings.basketItemOptions[formFieldName] !== "undefined") {
-                    settings.basketItemOptions[formFieldName] = formFieldValue;
-                }
-                else {
-                    if (!useFallback) {
-                        editor.setProductProperty(settings, formField, value, formFieldLabel, valueLabel, true);
+                const productOption = editor.mapFormFieldToProductOption(settings.product, formField, value, formFieldLabel, valueLabel);
+                if (productOption) {
+                    if (typeof settings.basketItemOptions[productOption.name] !== "undefined") {
+                        settings.basketItemOptions[productOption.name] = productOption.value;
                     }
                     else {
-                        settings.basketItemOptions[formField] = value;
+                        if (!useFallback) {
+                            editor.setProductProperty(settings, formField, value, formFieldLabel, valueLabel, true);
+                        }
+                        else {
+                            settings.basketItemOptions[productOption.name] = productOption.value;
+                        }
+                    }
+                }
+                else {
+                    const formFieldName = !useFallback ? formField : formFieldLabel;
+                    const formFieldValue = !useFallback ? value : valueLabel || value;
+                    if (typeof settings.basketItemOptions[formFieldName] !== "undefined") {
+                        settings.basketItemOptions[formFieldName] = formFieldValue;
+                    }
+                    else {
+                        if (!useFallback) {
+                            editor.setProductProperty(settings, formField, value, formFieldLabel, valueLabel, true);
+                        }
+                        else {
+                            settings.basketItemOptions[formField] = value;
+                        }
                     }
                 }
             },
@@ -5129,6 +5212,7 @@ class PrintessShopifyDirectAddToBasket {
         return;
     }
 }
+
 ;
 ;class PrintessShopifyCartVariantSwitcher {
     constructor(settings) {

@@ -229,6 +229,22 @@
       addedAdditionalProperties = true;
     {% endif %}
 
+    {% if product.metafields.printess.settings != blank %}
+      try {
+        const printessSettings = {{ product.metafields.printess.settings }};
+
+        if(printessSettings && printessSettings.pageCountFormField) {
+          if(!attachParams) {
+            attachParams = {};
+          }
+
+          attachParams["pageCountFormField"] = printessSettings.pageCountFormField;
+        }
+      } catch {
+
+      }
+    {% endif %}
+
     {% if printTemplateName == blank %}
       {% if product.metafields.printess.printTemplateName != blank %}
         additionalProperties["printTemplate"] = {{ product.metafields.printess.printTemplateName | json }};
