@@ -280,10 +280,7 @@ class PrintessSharedTools {
     }
 }
 
-;
-;
-;
-;class PrintessEditor {
+class PrintessEditor {
     constructor(settings) {
         this.lastSaveDate = new Date();
         this.calculateCurrentPrices = async (priceInfo) => {
@@ -540,6 +537,12 @@ class PrintessSharedTools {
                     break;
                 case 'basket':
                     const addToBasket = (saveToken, thumbnailUrl) => {
+                        if (!saveToken) {
+                            setTimeout(function () {
+                                alert("It seems like the system was unable to save your changes. Please try again.");
+                            }, 0);
+                            return;
+                        }
                         window.removeEventListener('message', eventListener);
                         window.removeEventListener('beforeunload', closeTabListener);
                         window.removeEventListener('unload', closeTabListener);
@@ -1090,11 +1093,29 @@ class PrintessSharedTools {
                 theme: theme,
                 skipExchangeStateApplication: true,
                 addToBasketCallback: (token, thumbnailUrl) => {
+                    const addToBasketParams = {};
+                    const editor = that.getPrintessComponent()?.editor;
+                    if (editor) {
+                        const pageInfo = editor.api.getAllDocsAndSpreads(true).find(x => x.isBook === true);
+                        if (pageInfo) {
+                            if (typeof pageInfo.pageCount !== undefined && pageInfo.pageCount > 0) {
+                                addToBasketParams.pageCount = pageInfo.pageCount;
+                                addToBasketParams.additionalPages = Math.abs(pageInfo.pageCount - pageInfo.minPages);
+                                addToBasketParams.minPages = pageInfo.minPages;
+                            }
+                        }
+                    }
                     const addToBasket = (saveToken, thumbnailUrl) => {
+                        if (!saveToken) {
+                            setTimeout(function () {
+                                alert("It seems like the system was unable to save your changes. Please try again.");
+                            }, 0);
+                            return;
+                        }
                         window.removeEventListener('beforeunload', closeTabListener);
                         window.removeEventListener('unload', closeTabListener);
                         if (callbacks && typeof callbacks.onAddToBasketAsync === "function") {
-                            callbacks.onAddToBasketAsync(token, thumbnailUrl).then(() => { });
+                            callbacks.onAddToBasketAsync(token, thumbnailUrl, addToBasketParams).then(() => { });
                         }
                     };
                     if (typeof PrintessEditor.currentContext.onAllowAddToBasket === "function") {
@@ -1219,13 +1240,19 @@ class PrintessSharedTools {
             onBack: () => {
                 that.hide(true);
             },
-            onAddToBasketAsync: async (saveToken, thumbnailUrl) => {
+            onAddToBasketAsync: async (saveToken, thumbnailUrl, params) => {
+                if (!saveToken) {
+                    setTimeout(function () {
+                        alert("It seems like the system was unable to save your changes. Please try again.");
+                    }, 0);
+                    return;
+                }
                 let result = null;
                 if (typeof PrintessEditor.currentContext.onAddToBasketAsync === "function") {
-                    result = await PrintessEditor.currentContext.onAddToBasketAsync(saveToken, thumbnailUrl);
+                    result = await PrintessEditor.currentContext.onAddToBasketAsync(saveToken, thumbnailUrl, params);
                 }
                 else {
-                    result = PrintessEditor.currentContext.onAddToBasket(saveToken, thumbnailUrl);
+                    result = PrintessEditor.currentContext.onAddToBasket(saveToken, thumbnailUrl, params);
                 }
                 if (result && result.waitUntilClosingMS) {
                     setTimeout(function () {
@@ -1529,7 +1556,7 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
     return new PrintessEditor(editorSettings);
 }
 
-;class PrintessShopifyGraphQlApi {
+class PrintessShopifyGraphQlApi {
     constructor(graphQlToken, language = null) {
         this.language = null;
         this.graphQlToken = graphQlToken;
@@ -1903,8 +1930,7 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
     }
 }
 
-;
-;class PrintessShopifyCart {
+class PrintessShopifyCart {
     constructor(printessSettings) {
         this.formFieldAsProperties = {};
         this.settings = printessSettings;
@@ -2451,6 +2477,17 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
                     const settings = PrintessEditor.getGlobalShopSettings();
                     if (typeof settings.onFormFieldChanged === "function") {
                         formFieldChangedCallback = settings.onFormFieldChanged;
+                    }
+                }
+                if (that.cartItemConfig && that.cartItemConfig.additionalSettings && that.cartItemConfig.additionalSettings["printQtyOption"]) {
+                    if (formField === that.cartItemConfig.additionalSettings["printQtyOption"] || formFieldLabel === that.cartItemConfig.additionalSettings["printQtyOption"]) {
+                        let printQuantity = PrintessEditor.extractNumber(value);
+                        if (isNaN(printQuantity) || !isFinite(printQuantity)) {
+                            printQuantity = PrintessEditor.extractNumber(valueLabel);
+                        }
+                        if (!isNaN(printQuantity) && isFinite(printQuantity)) {
+                            that.cartItemConfig.additionalSettings["printQty"] = printQuantity.toString();
+                        }
                     }
                 }
                 if (that.cartItemConfig.tableQuantityField) {
@@ -3219,8 +3256,6 @@ PrintessEditor.visible = false;function initPrintessEditor(shopToken, editorUrl,
     }
 }
 
-;
-;
 const showPrintessEditorFallback = (itemId, loopCount = 0, keepOriginalBasketItem = false, addToBasketDirect = false) => {
     const showMethodName1 = "openPrintessEditor" + itemId;
     const showMethodName2 = "showPrintessEditor" + itemId;
@@ -4267,10 +4302,12 @@ const initPrintessShopifyEditor = (printessSettings) => {
                         }
                     },
                     onAddToBasket: (saveToken, thumbnailUrl) => {
-                        if(!saveToken) {
-                          return;
+                        if (!saveToken) {
+                            setTimeout(function () {
+                                alert("It seems like the system was unable to save your changes. Please try again..");
+                            }, 0);
+                            return;
                         }
-
                         const isSave = typeof settings.basketItemId !== "undefined";
                         if (editor.originalSaveToken) {
                             if (!settings.additionalLineItemProperties) {
@@ -5217,8 +5254,7 @@ class PrintessShopifyDirectAddToBasket {
     }
 }
 
-;
-;class PrintessShopifyCartVariantSwitcher {
+class PrintessShopifyCartVariantSwitcher {
     constructor(settings) {
         this._settings = settings;
         document.querySelectorAll(".printess_cart_variant_switcher").forEach(x => this.addBasketItem(x));
@@ -5408,4 +5444,3 @@ class PrintessShopifyDirectAddToBasket {
     }
 }
 PrintessShopifyCartVariantSwitcher._productCache = {};
-;
