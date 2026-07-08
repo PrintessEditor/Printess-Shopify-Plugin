@@ -1,0 +1,49 @@
+.printess-animate-spin {
+  width: 16px;
+  height: 16px;
+  margin-right: 10px;
+  animation: printess-animate-spin 1s linear infinite;
+  display: none;
+}
+
+@keyframes printess-animate-spin {
+  to {
+    transform: rotate(360deg)
+  }
+}
+
+.printess-integration-button,
+.printess-direct-to-basket-button {
+  display: inline-flex;
+  align-items: center;
+  flex: 1 0 auto;
+  justify-content: center;
+}
+
+.show-progress>svg {
+  display: block;
+}
+
+printess-component {
+  display: none;
+}
+
+.printess-integration-button-wrapper {
+  display: flex;
+}
+
+.printess-integration-button-wrapper>button {
+  flex: 1;
+}
+
+.printess-integration-button-wrapper>button:first-child {
+  margin-right: 10px;
+}
+
+.printess-validation-message {
+  color: red;
+}
+
+/* .printess-loader-container>div:empty {
+  display: block !important;
+} */

@@ -1,0 +1,127 @@
+/**
+  Product page
+**/
+
+slider-component ul li .product__media img.printess-loader-visible {
+  opacity: 0.5;
+}
+
+slider-component ul li .loading-overlay__spinner.printess-loader-visible {
+  display: block !important;
+  z-index: 99;
+}
+
+.printess-hidden {
+  display: none !important;
+}
+
+.printess-progress-indicator {
+  width: 100%;
+  min-height: 200px;
+  background-color: #e3e3e3;
+  position: relative;
+}
+
+
+.printess-progress-wrapper {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 68px;
+  height: 68px;
+}
+
+.printess-image-progress-wrapper {
+  z-index: 999999;
+  position: absolute;
+  top: 0;
+  width: 100%;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.7)
+}
+
+
+
+.printess-progress-wrapper>.printess-circle {
+  animation: printess-loader-rotate 2s linear infinite;
+  height: 100%;
+  transform-origin: center center;
+  width: 100%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  margin: auto;
+}
+
+.printess-progress-wrapper>.printess-circle>.printess-path {
+  stroke-dasharray: 1, 200;
+  stroke-dashoffset: 0;
+  animation: printess-loader-dash 1.5s ease-in-out infinite, printess-loader-color 6s ease-in-out infinite;
+  stroke-linecap: round;
+}
+
+
+@keyframes printess-loader-rotate {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes printess-loader-dash {
+  0% {
+    stroke-dasharray: 1, 200;
+    stroke-dashoffset: 0;
+  }
+
+  50% {
+    stroke-dasharray: 89, 200;
+    stroke-dashoffset: -35;
+  }
+
+  100% {
+    stroke-dasharray: 89, 200;
+    stroke-dashoffset: -124;
+  }
+}
+
+@keyframes printess-loader-color {
+
+  100%,
+  0% {
+    stroke: #d62d20;
+  }
+
+  40% {
+    stroke: #0057e7;
+  }
+
+  66% {
+    stroke: #008744;
+  }
+
+  80%,
+  90% {
+    stroke: #ffa700;
+  }
+}
+
+/**
+  Cart Page
+**/
+.printess-cart-image-wrapper {
+  width: 100%;
+  height: 100%;
+  display: block !important;
+  text-align: center;
+}
+
+.printess-cart-image-wrapper button.printess-edit-button {
+  text-align: center;
+}
+
+.printess-thumbnail {
+  object-fit: contain;
+}

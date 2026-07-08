@@ -1,6 +1,6 @@
 import { iFormFieldProperty, iMergeTemplate } from "./printess-editor.d";
-import { INameValuePair, IPluginContext } from "./printess-shop-integration.d";
-import { IShopifySettings } from "./printess-shopify.d";
+import { INameValuePair, IPluginContext } from "../printess-plugins.d";
+import { IShopifySettings } from "../printess-shopify.d";
 
 declare global {
   const printessSettings: IShopifySettings;
