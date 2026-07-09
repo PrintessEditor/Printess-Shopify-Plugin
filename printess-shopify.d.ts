@@ -151,8 +151,8 @@ export interface ISessionSettings {
   productDefinitionId?: number;
   printessProductType?: string;
   formFieldsAsProperties?: Record<string, string>,
-  printQuantity?: number,
-  printQuantityOption?: string,
+  printQty?: number,
+  printQtyOption?: string,
   tableQuantityField?: string,
   circulationRecordCount?: string,
   saveTokenToDelete?: string;

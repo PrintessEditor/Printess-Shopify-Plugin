@@ -47,7 +47,8 @@ export interface IPrintessProductSettings {
   hasFullEditorButton?: boolean;
   formFields?: Record<string, string>;
   bookSettings?: iExternalBookSettings | null;
-  personalizationMode?: TVariantPersonalizationOption | null
+  personalizationMode?: TVariantPersonalizationOption | null;
+  printQtyOption?: string | null;
 }
 
 export interface IPrintessVariantSettings {

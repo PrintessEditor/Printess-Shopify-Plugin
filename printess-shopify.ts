@@ -1328,6 +1328,7 @@ export class PrintessShopify implements IIntegration {
     const currentVariant = await this.getCurrentVariantAsync(this.getPluginContextDummy(product));
     const productOrVariantTemplateName = await this.getTemplateNameAsync(this.getPluginContextDummy(product, currentVariant), "", true);
     const templateName = templateNameOrSaveToken ? templateNameOrSaveToken : productOrVariantTemplateName;
+    const productSettings = product.getSettings() || {};
 
     let currentSession: ISessionSettings | undefined = undefined;
 
@@ -1335,6 +1336,14 @@ export class PrintessShopify implements IIntegration {
       if (this.cartItem.properties["_printessSettings"]) {
         currentSession = PrintessShopify.parseJsonHtmlDecode<ISessionSettings>(this.cartItem.properties["_printessSettings"]) || undefined;
       }
+    }
+
+    if (productSettings.printQtyOption && productSettings.printQtyOption.trim()) {
+      if (!currentSession) {
+        currentSession = {};
+      }
+
+      currentSession.printQtyOption = productSettings.printQtyOption;
     }
 
     if (sessionSettings && currentSession) {
