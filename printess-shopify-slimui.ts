@@ -4,7 +4,7 @@ import { PrintessShopifyGraphQlApi } from "./printess-graphql-api.js";
 import { iExternalImage, iExternalImageFrameDimensions, iFormFieldNameValue, iImage, iMergeTemplate, IProduct } from "./printess-editor.d";
 import { PrintessSharedTools } from "./printess-shared-tools.js";
 import { iSlimState, iSlimUiLoadParams } from "../../../slim-ui/slim/slim-ui.d";
-import { INameValuePair, IPlugin, IPluginContext, IPrintessProduct, IPrintessProductSettings, IPrintessProductVariant, IPrintessVariantSettings, TUiType } from "./printess-plugins.d"
+import { INameValuePair, IPlugin, IPluginContext, IPrintessProduct, IPrintessProductSettings, IPrintessProductVariant, IPrintessVariantSettings, TSlimUiFeature, TUiType } from "./printess-plugins.d"
 
 interface IThemeProductNodes {
   productContainer: HTMLElement;
@@ -43,6 +43,8 @@ export class PrintessShopifySlimUi implements IIntegration {
   private currentSaveToken: string = "";
   private mode: ISlimUiMode = "edit";
   private pluginContainer: IPluginContainer;
+  private slimUiFeatures: TSlimUiFeature[] = [];
+  private pageNavigationContainer: HTMLDivElement | null = null;
 
   private static fullVariantCache: Record<number, IShopifyVariant<number>> = {};
 
@@ -109,6 +111,7 @@ export class PrintessShopifySlimUi implements IIntegration {
     ret.cssPriceTextSelector = ret.cssPriceTextSelector || ".price__regular>span.price-item.price-item--regular";
     ret.cssQuantityInputSelector = ret.cssQuantityInputSelector || '[name="quantity"],[name="qty"]';
     ret.cssProductThumbnailImageSelector = ret.cssProductThumbnailImageSelector || "slider-component ul li .product__media img,slider-component ul";
+    ret.cssProductThumbnailNavigationSelector = ret.cssProductThumbnailNavigationSelector || "slider-component.thumbnail-slider,.thumbnail-list,.product-single__thumbnails";
     ret.cssProductLargePreviewImagesSelector = ret.cssProductLargePreviewImagesSelector || "{GLOBAL}.product-media-modal__content > img";
 
     return ret;
@@ -328,6 +331,92 @@ export class PrintessShopifySlimUi implements IIntegration {
     slimUiContainer.classList.add("printess-item-container", "printess-ui", "printess-hidden");
 
     return slimUiContainer;
+  }
+
+  private static parseSlimUiFeatures(productSettings: IPrintessProductSettings | null | undefined): TSlimUiFeature[] {
+    const features = productSettings?.slimUiFeatures;
+
+    if (!features) {
+      return [];
+    }
+
+    return Array.isArray(features) ? features : [features];
+  }
+
+  private hasSlimUiFeature(feature: TSlimUiFeature): boolean {
+    return this.slimUiFeatures.indexOf(feature) >= 0;
+  }
+
+  /**
+   * The page navigation replaces the theme thumbnails, so every product image besides the main one
+   * (which stays the slim-ui preview image) and the theme thumbnail strip are hidden. `initThumbnails()`
+   * stops rendering them as well, as nobody would see them.
+   */
+  private hideThemeProductThumbnails(): void {
+    const thumbnails = this.themeProductNodes.productThumbnails;
+
+    for (let i = 1; i < thumbnails.length; ++i) {
+      PrintessShopifySlimUi.showOrHideElement(thumbnails[i].closest<HTMLElement>("li") || thumbnails[i], false);
+    }
+
+    const navigationSelector = this.settings.uiSelectors?.cssProductThumbnailNavigationSelector;
+
+    if (navigationSelector) {
+      this.themeProductNodes.productContainer.querySelectorAll<HTMLElement>(navigationSelector).forEach((x) => {
+        PrintessShopifySlimUi.showOrHideElement(x, false);
+      });
+    }
+  }
+
+  /**
+   * In page-navigation mode a single image slot has to show portrait covers and landscape inside
+   * pages alike. Theme CSS usually forces one aspect (object-fit: cover), so instead of handing
+   * slim-ui the theme's own <img> - which it swaps the src of directly on every page change - the
+   * original is hidden in place (kept in the layout so the slot keeps its theme-driven size) and a
+   * same-sized overlay image with object-fit: contain is created to receive the preview instead,
+   * so every orientation is always fully shown, never cropped.
+   */
+  private createFittedPreviewImage(originalImage: HTMLImageElement): HTMLImageElement {
+    const parent = originalImage.parentElement;
+
+    if (!parent) {
+      return originalImage;
+    }
+
+    if (getComputedStyle(parent).position === "static") {
+      parent.style.position = "relative";
+    }
+
+    originalImage.classList.add("printess-preview-source-hidden");
+
+    const fittedImage = document.createElement("img");
+    fittedImage.classList.add("printess-fitted-preview-image");
+
+    parent.insertBefore(fittedImage, originalImage.nextSibling);
+
+    return fittedImage;
+  }
+
+  /** Creates the full width container slim-ui renders its page navigation into, above the main product image. */
+  private getOrCreatePageNavigationContainer(): HTMLDivElement {
+    const mediaNode = this.themeProductNodes.productContainer.querySelector(this.settings.uiSelectors!.cssProductMediaSelector!);
+
+    if (!mediaNode) {
+      throw "Printess Integration: Media container not found.";
+    }
+
+    const existing = mediaNode.querySelector<HTMLDivElement>(".printess-page-navigation");
+
+    if (existing) {
+      return existing;
+    }
+
+    const container = document.createElement("div");
+    container.classList.add("page-navigation", "printess-page-navigation");
+
+    mediaNode.insertBefore(container, mediaNode.firstChild);
+
+    return container;
   }
 
   private static getUrlParams(): IUrlParams {
@@ -933,6 +1022,12 @@ export class PrintessShopifySlimUi implements IIntegration {
   }
 
   private async initThumbnails(currentImageUrl?: string): Promise<{ url: string, imageFrameDimensions: Record<string, iExternalImageFrameDimensions> }[]> {
+    if (this.hasSlimUiFeature("pageNavigation")) {
+      // the thumbnails are hidden and slim-ui renders the page navigation itself, so requesting a
+      // preview render per page here would only cost render time nobody gets to see
+      return currentImageUrl ? [{ url: currentImageUrl, imageFrameDimensions: {} }] : [];
+    }
+
     const secondThumbnails = this.getThemeLargeProductThumbnails(this.themeProductNodes.productContainer);
     const ret: { url: string, imageFrameDimensions: Record<string, iExternalImageFrameDimensions> }[] = [];
 
@@ -1135,11 +1230,42 @@ export class PrintessShopifySlimUi implements IIntegration {
       ret.mode = "cartedit";
     }
 
+    let productSettings: IPrintessProductSettings | undefined | null;
+
+    if (ret.product && ret.product.printessSettings && ret.product.printessSettings.value) {
+      try {
+        productSettings = <IPrintessProductSettings>JSON.parse(ret.product.printessSettings.value);
+      } catch (e) {
+        console.error("Printess Integration: Unable to deserialize product settings: " + JSON.stringify(e));
+      }
+    }
+
+    ret.slimUiFeatures = PrintessShopifySlimUi.parseSlimUiFeatures(productSettings);
+
+    if (ret.hasSlimUiFeature("pageNavigation")) {
+      ret.hideThemeProductThumbnails();
+      ret.pageNavigationContainer = ret.getOrCreatePageNavigationContainer();
+    }
+
+    let editorTheme = "DEFAULT";
+
+    if (ret.product?.theme?.value) {
+      editorTheme = ret.product.theme.value;
+    } else if (productSettings?.theme) {
+      editorTheme = productSettings.theme;
+    } else if (ret.settings?.printessThemeName) {
+      editorTheme = ret.settings?.printessThemeName;
+    }
+
     const createParams: iSlimUiLoadParams = {
       disableProductImageUploadOnStartup: settings.slimUi.doNotUpdateThumbnailOnLoad === true,
-      previewContainer: document.createElement("div"),
       uiContainer: ret.themeProductNodes.slimUiContainer as HTMLDivElement,
-      previewImage: ret.themeProductNodes.productThumbnails.length > 0 ? ret.themeProductNodes.productThumbnails[0] : document.createElement("img"),
+      previewImage: ret.themeProductNodes.productThumbnails.length > 0
+        ? (ret.hasSlimUiFeature("pageNavigation")
+          ? ret.createFittedPreviewImage(ret.themeProductNodes.productThumbnails[0])
+          : ret.themeProductNodes.productThumbnails[0])
+        : document.createElement("img"),
+      pageNavigation: ret.pageNavigationContainer ?? undefined,
       loader: ret.themeProductNodes.imageProgressIndicator,
       shopToken: ret.settings.shopToken,
       templateName: templateName,
@@ -1147,7 +1273,7 @@ export class PrintessShopifySlimUi implements IIntegration {
       formFields: formFields || [],
       apiDomain: ret.settings.apiDomain || "api.printess.com",
       //mergeTemplates: mergeTemplates,
-      theme: ret.settings.printessThemeName || "DEFAULT",
+      theme: editorTheme,
       formFieldChangedCallback: function (name: string, value: string, tag: string, label: string, ffLabel: string): void {
         ret.unmapFormField(name, value, ffLabel, label).then((mappedFormField) => {
           ret.setProductOptionValue(mappedFormField.name, mappedFormField.value, ffLabel, label);
@@ -1215,6 +1341,14 @@ export class PrintessShopifySlimUi implements IIntegration {
         });
       }
     };
+
+    if (productSettings && productSettings.slimUiMerge1) {
+      (createParams as any).merge1 = productSettings.slimUiMerge1;
+    }
+
+    //Todo:Neeads to be removed later
+    (createParams as any).previewContainer = document.createElement("div");
+
 
     if (ret.product && ret.product.printessSettings && ret.product.printessSettings.value) {
       try {
@@ -1641,6 +1775,10 @@ export class PrintessShopifySlimUi implements IIntegration {
       const additionalValues: Record<string, string> = {
         _printessSettings: JSON.stringify(printessSettings)
       };
+
+      if (this.settings.cartItemPropertyName && this.settings.cartItemPropertyValue) {
+        additionalValues[this.settings.cartItemPropertyName] = this.settings.cartItemPropertyValue;
+      }
 
       const doAdd: boolean = await this.doAllowAddToBasket(PrintessShopifySlimUi.convertToPrintessProduct(this.product, variant ? variant.price.amount : 0), PrintessShopifySlimUi.convertToPrintessVariant(variant), {
         saveToken: saveToken,
@@ -2145,7 +2283,7 @@ export class PrintessShopifySlimUi implements IIntegration {
     const ret: IPluginContext = {
       integration: this,
       product: product,
-      type: "editor",
+      type: "slim",
       variant: variant
     };
 

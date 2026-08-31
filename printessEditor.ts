@@ -1,9 +1,8 @@
 import { iExternalBookSettings, iExternalImage, iExternalPriceDisplay, iExternalProductPriceInfo, iFormFieldNameValue, iFormFieldProperty, iMergeTemplate, iPrintessApi, iPrintessComponent, IShopData } from "./printess-editor.d";
 import { IImageDimensionFormFields, IIntegration, IPluginContainer, ISessionSettings } from "./printess-shopify.d";
 import { PrintessSharedTools } from "./printess-shared-tools.js";
-import { IFormFieldMapping, IPlugin, IPluginContext, INameValuePair, ISaveFormFieldAsPropertyEntry, IPriceInformation, IPrintessProduct, IPrintessProductVariant } from "./printess-plugins.d";
+import { IFormFieldMapping, IPlugin, IPluginContext, INameValuePair, ISaveFormFieldAsPropertyEntry, IPriceInformation, IPrintessProduct, IPrintessProductVariant, IPrintessProductSettings } from "./printess-plugins.d";
 import { IPluginHost, PrintessPluginHost } from "./printess-plugin-host.js";
-import { iExternalPhotobookStep } from "../../../editor/custom-ui/printess-editor";
 
 interface IEditorContext {
   editorDomain: string;
@@ -33,6 +32,12 @@ interface IPriceRelevantInfo {
   minPages?: number | null,
   additionalPages?: number | null,
   variant?: IPrintessProductVariant | null;
+  printedRecordCount?: number | null;
+  pureRecordCount?: number | null;
+}
+
+interface ILegacyCompatibleProductSettings extends IPrintessProductSettings {
+  pageCountFormField?: string | null;
 }
 
 export class PrintessEditorFrontend {
@@ -230,6 +235,7 @@ export class PrintessEditorFrontend {
         buttons: null,
         useBCUILocalCode: false,
         skipExchangeStateApplication: true,
+        templateVersion: "published",
         addToBasketCallback: (token: string, thumbnailUrl: string): void => {
           PrintessEditorFrontend._currentTemplateNameOrSaveToken = token;
           PrintessEditorFrontend._currentThumbnailUrl = thumbnailUrl;
@@ -420,6 +426,20 @@ export class PrintessEditor {
     }
   }
 
+  private static GetPageCountFormFieldName(settings?: ILegacyCompatibleProductSettings | IPrintessProductSettings | null): string {
+    if (settings) {
+      var castedSettings: ILegacyCompatibleProductSettings = settings as ILegacyCompatibleProductSettings;
+
+      if (castedSettings.pageCountFormField) {
+        return castedSettings.pageCountFormField;
+      } else if (castedSettings.pageCountOptionName) {
+        return castedSettings.pageCountOptionName;
+      }
+    }
+
+    return "";
+  }
+
   public editorIsOpen() {
     return PrintessEditorFrontend.editorIsOpen();
   }
@@ -541,6 +561,14 @@ export class PrintessEditor {
       }
     }
 
+    if (typeof priceRelevantData?.printedRecordsCount !== "undefined" && priceRelevantData.printedRecordsCount >= 0) {
+      ret.printedRecordCount = priceRelevantData.printedRecordsCount;
+    }
+
+    if (typeof priceRelevantData?.pureRecordsCount !== "undefined" && priceRelevantData.pureRecordsCount >= 0) {
+      ret.pureRecordCount = priceRelevantData.pureRecordsCount;
+    }
+
     const currentVariant: IPrintessProductVariant | null = await this._pluginHost.getCurrentVariantAsync(this.getPluginContext(null), null);
 
     currentVariant?.getVariantOptions().forEach((nameAndValue) => {
@@ -566,6 +594,26 @@ export class PrintessEditor {
         ret.formFields.push(formField);
       }
     });
+
+    const formFieldOptionName = PrintessEditor.GetPageCountFormFieldName(this._product.getSettings());
+
+    if (formFieldOptionName) {
+      const lowerFormFieldOptionName = formFieldOptionName.toLowerCase();
+
+      const productOption = (this._product.getProductOptions() || []).find(x => (x.name || "").toLowerCase() === lowerFormFieldOptionName);
+
+      if (productOption) {
+        const formFieldOptionValue = (productOption.values || []).find(x => PrintessEditor.extractNumber(x) === ret.pageCount);
+
+        if (typeof formFieldOptionValue !== "undefined" && formFieldOptionValue.length > 0) {
+          const formFieldEntry = ret.formFields.find(x => (x.name || "").toLowerCase() === lowerFormFieldOptionName);
+
+          if (formFieldEntry) {
+            formFieldEntry.value = formFieldOptionValue;
+          }
+        }
+      }
+    }
 
     ret.variant = await this.getVariantByCurrentFormFieldValues(ret.formFields);
 
@@ -697,6 +745,31 @@ export class PrintessEditor {
       }
     }
 
+    let records: {
+      count?: number,
+      printed?: number
+    } = {};
+
+    if (typeof priceRelevantData.pureRecordCount !== "undefined" && (priceRelevantData.pureRecordCount || 0) > 0) {
+      records.count = priceRelevantData.pureRecordCount || 0;
+    }
+
+    if (typeof priceRelevantData.printedRecordCount !== "undefined" && (priceRelevantData.printedRecordCount || 0) > 0) {
+      records.printed = priceRelevantData.printedRecordCount || 0;
+    }
+
+    const editorSettings = this._pluginHost.getEditorSettings(this.getPluginContext(this._variant), null);
+
+    if (records.count || records.printed) {
+      propertyValuesToWrite["_printessRecords"] = JSON.stringify(records);
+
+      if (editorSettings && editorSettings.usePageCountInsteadOfPrintedRecordCount === true) {
+        if (records.printed && records.printed > 0) {
+          propertyValuesToWrite["_printessPageCount"] = records.printed.toString();
+        }
+      }
+    }
+
     if (priceRelevantData.formFields && priceRelevantData.formFields.length > 0) {
       propertyValuesToWrite["_printessFormFields"] = JSON.stringify(priceRelevantData.formFields.map((x) => {
         const ret: { name: string, value: string, ffLabel?: string, valueLabel?: string } = {
@@ -778,7 +851,51 @@ export class PrintessEditor {
     return variant;
   }
 
+  private static extractNumber(inputStr: string): number {
+    let c = "0123456789";
+
+    function check(x: string) {
+      return c.includes(x) ? true : false;
+    }
+
+    return parseInt([...inputStr].reduce((x, y) => (check(y) ? x + y : x), ""));
+  }
+
+  private static parseNumberFromValues(values: string[]): number {
+    let ret: number = NaN;
+
+    if (values) {
+      for (let i = 0; i < values.length; ++i) {
+        if (typeof values[i] !== "undefined" && values[i] !== null) {
+          ret = this.extractNumber(values[i]);
+
+          if (!isNaN(ret) && isFinite(ret)) {
+            break;
+          }
+        }
+      }
+    }
+
+    return ret;
+  }
+
   private async onFormFieldChangedAsync(name: string, value: string, tag: string, label: string, ffLabel: string): Promise<void> {
+    const formFieldOptionName = PrintessEditor.GetPageCountFormFieldName(this._product.getSettings());
+
+    if (formFieldOptionName && formFieldOptionName === name) {
+      const lowerFormFieldOptionName = formFieldOptionName.toLowerCase();
+
+      const productOption = (this._product.getProductOptions() || []).find(x => (x.name || "").toLowerCase() === lowerFormFieldOptionName);
+
+      if (productOption) {
+        const formFieldOptionValue = (productOption.values || []).find(x => ("" + PrintessEditor.extractNumber(x)) === value);
+
+        if (typeof formFieldOptionValue !== "undefined" && formFieldOptionValue.length > 0) {
+          value = formFieldOptionValue;
+        }
+      }
+    }
+
     let entry = this._formFieldsAsProperties.find((x) => { x.formfieldName === name });
 
     if (entry) {
@@ -796,6 +913,14 @@ export class PrintessEditor {
         }
 
         this._session.formFieldsAsProperties[entry.propertyName || entry.formfieldName] = label;
+      }
+    }
+
+    if (this._session.printQtyOption && ([name, ffLabel].includes(this._session.printQtyOption))) {
+      const number = PrintessEditor.parseNumberFromValues([label, value]);
+
+      if (!isNaN(number) && isFinite(number)) {
+        this._session.printQty = number;
       }
     }
 
@@ -827,6 +952,15 @@ export class PrintessEditor {
     const priceRelevantData = await this.getPriceRelevantData(priceInfo);
     const variant = priceRelevantData.variant || this._variant;
 
+    //Fix for magic photobook wizard where the pagfe count is not already persisted in the template
+    if (typeof priceInfo.pageCount !== "undefined" && priceInfo.pageCount !== null && priceInfo.pageCount > 1 && priceRelevantData.pageCount !== priceInfo.pageCount) {
+      priceRelevantData.pageCount = priceInfo.pageCount;
+
+      if (typeof priceRelevantData.minPages !== "undefined" && priceRelevantData.minPages !== null) {
+        priceRelevantData.additionalPages = Math.abs(priceInfo.pageCount - priceRelevantData.minPages);
+      }
+    }
+
     if (priceRelevantData.pageCount && priceRelevantData.pageCount !== this._currentNumberOfPages) {
       this._currentNumberOfPages = priceRelevantData.pageCount;
 
@@ -835,8 +969,10 @@ export class PrintessEditor {
         pageCount: priceRelevantData.pageCount
       });
 
-      if (this._product.getSettings()?.pageCountOptionName) {
-        const mapped = await this.reverseFormFieldMapping(this._product.getSettings()?.pageCountOptionName || "", priceInfo.pageCount.toString(), "", "", typeof this._pluginHost.getFormFieldMappingsAsync === "function" ? (await this._pluginHost.getFormFieldMappingsAsync(this.getPluginContext(priceRelevantData.variant || null))) : null);
+      const pageCountOptionName: string = PrintessEditor.GetPageCountFormFieldName(this._product.getSettings());
+
+      if (pageCountOptionName) {
+        const mapped = await this.reverseFormFieldMapping(pageCountOptionName || "", priceInfo.pageCount.toString(), "", "", typeof this._pluginHost.getFormFieldMappingsAsync === "function" ? (await this._pluginHost.getFormFieldMappingsAsync(this.getPluginContext(priceRelevantData.variant || null))) : null);
 
         await this.onFormFieldChangedAsync(mapped.name, mapped.value, "", "", "");
       }
@@ -857,7 +993,8 @@ export class PrintessEditor {
         ...priceRelevantData,
         currentFormFieldValues: priceRelevantData.formFields,
         numberOfPages: this._currentNumberOfPages,
-        printedRecordCount: typeof this._printedRecordCount === "number" ? this._printedRecordCount : 0
+        pureRecordCount: priceRelevantData.pureRecordCount || 0,
+        printedRecordCount: typeof this._printedRecordCount === "number" ? this._printedRecordCount : (priceRelevantData.printedRecordCount || 0)
       });
     }
 
@@ -869,7 +1006,8 @@ export class PrintessEditor {
         currentFormFieldValues: priceRelevantData.formFields,
         price: currentPrice,
         numberOfPages: this._currentNumberOfPages,
-        printedRecordCount: this._printedRecordCount != null ? this._printedRecordCount : 0
+        pureRecordCount: priceRelevantData.pureRecordCount || 0,
+        printedRecordCount: this._printedRecordCount != null ? this._printedRecordCount : (priceRelevantData.printedRecordCount || 0)
       });
     }
 
@@ -884,7 +1022,8 @@ export class PrintessEditor {
         ...priceRelevantData,
         currentFormFieldValues: priceRelevantData.formFields,
         numberOfPages: this._currentNumberOfPages,
-        printedRecordCount: this._printedRecordCount != null ? this._printedRecordCount : 0
+        pureRecordCount: priceRelevantData.pureRecordCount || 0,
+        printedRecordCount: this._printedRecordCount != null ? this._printedRecordCount : (priceRelevantData.printedRecordCount || 0)
       });
     }
 
@@ -895,7 +1034,8 @@ export class PrintessEditor {
         ...priceRelevantData,
         currentFormFieldValues: priceRelevantData.formFields,
         numberOfPages: this._currentNumberOfPages,
-        printedRecordCount: this._printedRecordCount != null ? this._printedRecordCount : 0
+        pureRecordCount: priceRelevantData.pureRecordCount || 0,
+        printedRecordCount: this._printedRecordCount != null ? this._printedRecordCount : (priceRelevantData.printedRecordCount || 0)
       });
     }
 
@@ -910,7 +1050,8 @@ export class PrintessEditor {
           currentFormFieldValues: priceRelevantData.formFields,
           price: oldPriceInCent,
           numberOfPages: this._currentNumberOfPages,
-          printedRecordCount: this._printedRecordCount != null ? this._printedRecordCount : 0
+          pureRecordCount: priceRelevantData.pureRecordCount || 0,
+          printedRecordCount: this._printedRecordCount != null ? this._printedRecordCount : (priceRelevantData.printedRecordCount || 0)
         });
       }
     }
@@ -921,7 +1062,8 @@ export class PrintessEditor {
         ...priceRelevantData,
         currentFormFieldValues: priceRelevantData.formFields,
         numberOfPages: this._currentNumberOfPages,
-        printedRecordCount: typeof this._printedRecordCount === "number" ? this._printedRecordCount : 0
+        pureRecordCount: priceRelevantData.pureRecordCount || 0,
+        printedRecordCount: typeof this._printedRecordCount === "number" ? this._printedRecordCount : (priceRelevantData.printedRecordCount || 0)
       });
 
       if (labels) {
@@ -1061,8 +1203,20 @@ export class PrintessEditor {
   private createContext(): IEditorContext {
     const that = this;
 
-    const customLoader = typeof this._pluginHost.getCustomLoader === "function" ? this._pluginHost.getCustomLoader(this.getPluginContext(this._variant)) : null;
-    const editorSettings = this._pluginHost.getEditorSettings(this.getPluginContext(this._variant));
+    const context = this.getPluginContext(this._variant);
+    const customLoader = typeof this._pluginHost.getCustomLoader === "function" ? this._pluginHost.getCustomLoader(context) : null;
+    const editorSettings = this._pluginHost.getEditorSettings(context);
+
+    const productSettings = this._product.getSettings();
+    let editorTheme = "DEFAULT";
+
+    if ((<any>this._product)?.theme?.value) {
+      editorTheme = (<any>this._product)?.theme?.value;
+    } else if (productSettings && productSettings.theme) {
+      editorTheme = productSettings.theme;
+    } else if (editorSettings && editorSettings.theme) {
+      editorTheme = editorSettings.theme;
+    }
 
     const ret: IEditorContext = {
       editorDomain: editorSettings.editorDomain || "editor.printess.com",
@@ -1196,9 +1350,13 @@ export class PrintessEditor {
 
     return photobookSettings || null;
   }
-  public async show(templateNameOrSaveToken: string, session?: ISessionSettings): Promise<boolean> {
+  public async show(templateNameOrSaveToken: string, session?: ISessionSettings, variant?: IPrintessProductVariant | null): Promise<boolean> {
     if (this._editorIsOpen) {
       return false;
+    }
+
+    if (variant) {
+      this._variant = variant;
     }
 
     this._editorIsOpen = true;
@@ -1207,22 +1365,26 @@ export class PrintessEditor {
 
     this._currentShopSaveData = {};
 
-    this._formFieldsAsProperties = PrintessPluginHost.parseFormFieldsAsProperties(await this._pluginHost.getFormFieldsAsPropertiesAsync(this.getPluginContext(this._variant)));
+    let context = this.getPluginContext(this._variant);
+
+    this._formFieldsAsProperties = PrintessPluginHost.parseFormFieldsAsProperties(await this._pluginHost.getFormFieldsAsPropertiesAsync(context));
 
     this.updateProduct();
+
+    context = this.getPluginContext(this._variant);
 
     templateNameOrSaveToken = templateNameOrSaveToken || "";
     let formFields: INameValuePair[] = [];
     const templateNameToApply = templateNameOrSaveToken ? templateNameOrSaveToken : (this._variant && this._variant.getTemplateName() ? this._variant.getTemplateName() : this._product.getTemplateName() || "");
     const templateNameIsSaveToken: boolean = templateNameOrSaveToken.startsWith("st:");
-    const formFieldMappings = await this._pluginHost.getFormFieldMappingsAsync(this.getPluginContext(this._variant));
+    const formFieldMappings = await this._pluginHost.getFormFieldMappingsAsync(context);
 
     this._currentTemplateNameOrSaveToken = templateNameIsSaveToken ? templateNameToApply : "";
 
     const mergeTemplates = templateNameIsSaveToken ? [] : (this._variant.getMergeTemplates() ? PrintessSharedTools.parseMergeTemplate(this._variant.getMergeTemplates()) : (this._product.getMergeTemplates() ? PrintessSharedTools.parseMergeTemplate(this._product.getMergeTemplates()) : []));
 
     if (!templateNameIsSaveToken) {
-      formFields = await PrintessEditor.applyFormFieldMappings(this._pluginHost, this.getPluginContext(this._variant), PrintessEditor.MergeFormFieldValues(await this._pluginHost.getFormFieldsAsync(this.getPluginContext(this._variant), formFields), this._variant.getVariantOptions()), formFieldMappings);
+      formFields = await PrintessEditor.applyFormFieldMappings(this._pluginHost, context, PrintessEditor.MergeFormFieldValues(await this._pluginHost.getFormFieldsAsync(context, formFields), this._variant.getVariantOptions()), formFieldMappings);
 
       //Apply photobook theme
       if (this._product && this._product.getSettings() && this._product.getSettings()?.photobookTheme) {
@@ -1236,14 +1398,14 @@ export class PrintessEditor {
       attachParams = {
         templateVersion: "publish",
         ...attachParams,
-        ...await this._pluginHost.getAttachParametersAsync(this.getPluginContext(this._variant))
+        ...await this._pluginHost.getAttachParametersAsync(context)
       };
     }
 
     let supportsSaving = false;
 
     if (typeof this._pluginHost.supportsSavingAsync === "function") {
-      supportsSaving = await this._pluginHost.supportsSavingAsync(this.getPluginContext(this._variant));
+      supportsSaving = await this._pluginHost.supportsSavingAsync(context);
     }
 
     if (supportsSaving) {
@@ -1334,6 +1496,10 @@ export class PrintessEditor {
             }
           }
         }
+
+        that._pluginHost.onLoadSavedStateAsync(that.getPluginContext(that._variant), shopData).then(() => {
+
+        });
       };
 
       attachParams["getShopProjectDisplayNameCallback"] = () => {
@@ -1345,7 +1511,23 @@ export class PrintessEditor {
       }
     }
 
-    const formFieldProperties: iFormFieldProperty[] = typeof this._pluginHost.getFormFieldPropertiesAsync === "function" ? (await this._pluginHost.getFormFieldPropertiesAsync(this.getPluginContext(this._variant))) : [];
+    const formFieldProperties: iFormFieldProperty[] = typeof this._pluginHost.getFormFieldPropertiesAsync === "function" ? (await this._pluginHost.getFormFieldPropertiesAsync(context)) : [];
+
+    if (session && session.printQtyOption && !session.printQty) {
+      //We should use the print qty  option, but did not get a print qty (this happens in case we are not editing a basket item)
+      //So try to get the current print qty from the given form field values
+      if (formFields && formFields.length > 0) {
+        formFields.forEach((x) => {
+          if (x.name === session.printQtyOption) {
+            const number = PrintessEditor.extractNumber(x.value);
+
+            if (!isNaN(number) && isFinite(number)) {
+              session.printQty = number;
+            }
+          }
+        });
+      }
+    }
 
     if (!(await this._pluginHost.doAllowOpenAsync(this.getPluginContext(this._variant), {
       formFieldProperties: formFieldProperties,
@@ -1363,15 +1545,21 @@ export class PrintessEditor {
       delete attachParams["bookSettings"];
     }
 
-    if (await PrintessEditorFrontend.show(this.createContext(), templateNameToApply, formFields, mergeTemplates, formFieldProperties, attachParams)) {
-      if ((this._product.getSettings()?.productType || "").toLocaleLowerCase() !== "magicphotobook" && this._product.getSettings()?.pageCountOptionName) {
+    const editorContext = this.createContext();
+
+    editorContext.translationLanguage = await this._pluginHost.getTranslationKeyAsync(context, editorContext.translationLanguage || "auto");
+
+    if (await PrintessEditorFrontend.show(editorContext, templateNameToApply, formFields, mergeTemplates, formFieldProperties, attachParams)) {
+      const pageCountOptionName: string = PrintessEditor.GetPageCountFormFieldName(this._product.getSettings());
+
+      if ((this._product.getSettings()?.productType || "").toLocaleLowerCase() !== "magicphotobook" && pageCountOptionName) {
         const that = this;
         const pageCountFormField = formFields.filter((ff) => {
-          return ff.name === this._product.getSettings()?.pageCountOptionName;
+          return ff.name === pageCountOptionName;
         });
 
         if (pageCountFormField && pageCountFormField.length > 0) {
-          const number = Number(pageCountFormField[0].value);
+          const number = PrintessEditor.extractNumber(pageCountFormField[0].value);
 
           if (typeof pageCountFormField[0].value === 'string' && !Number.isNaN(number) && Number.isFinite(number) && Number.isInteger(number) && number > 0) {
             try {
@@ -1404,7 +1592,7 @@ export class PrintessEditor {
         }
       }
 
-      await this._pluginHost.onOpenAsync(this.getPluginContext(this._variant), {
+      await this._pluginHost.onOpenAsync(context, {
         formFieldProperties: formFieldProperties,
         formFields: formFields,
         mergeTemplates: mergeTemplates,

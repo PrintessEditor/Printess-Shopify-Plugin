@@ -435,10 +435,18 @@ export class PrintessSharedTools {
     return url.toString();
   }
 
-  public static onHookFetch(callback: ((url: string, init: RequestInit | null, response: Response) => "continue" | "cancel"), timeoutSeconds: number = 4): void {
+  public static onHookFetch(callback: ((url: string, init: RequestInit | null, response: Response) => "continue" | "cancel"), timeoutSeconds: number = 4, beforeFetch?: (args: any[]) => void): void {
     const originalFetch = window.fetch;
 
     window.fetch = (...args): Promise<Response> => {
+      if (typeof beforeFetch === "function") {
+        try {
+          beforeFetch(args);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
       const fetchPromise = originalFetch.apply(window, args);
       const params = args;
 

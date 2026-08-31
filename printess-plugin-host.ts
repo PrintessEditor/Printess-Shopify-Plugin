@@ -387,6 +387,22 @@ export class PrintessPluginHost implements IPluginHost {
     }
   }
 
+  public async onLoadSavedStateAsync(context: IPluginContext, shopData: IShopData): Promise<void> {
+    const plugins = this.getPlugins();
+
+    for (let i = 0; i < plugins.length; ++i) {
+      const plugin = plugins[i];
+
+      try {
+        if (typeof plugin.onLoadSavedStateAsync === "function") {
+          await PrintessPluginHost.waitForResult(plugin.onLoadSavedStateAsync(context, shopData));
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }
+
   public async onCloseAsync(context: IPluginContext, params: {
     saveToken: string,
     thumbnailUrl: string,
@@ -446,6 +462,7 @@ export class PrintessPluginHost implements IPluginHost {
   public async getPriceInCentAsync(context: IPluginContext, currentPrice: number, params: {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
+    pureRecordCount?: number,
     printedRecordCount?: number
   }): Promise<number> {
     let ret: number = currentPrice;
@@ -474,7 +491,8 @@ export class PrintessPluginHost implements IPluginHost {
     currentFormFieldValues?: { name: string, value: string }[],
     price: number,
     numberOfPages: number,
-    printedRecordCount: number
+    pureRecordCount?: number,
+    printedRecordCount?: number
   }): Promise<string> {
     let ret: string = currentValue;
     const plugins = this.getPlugins(true);
@@ -501,6 +519,7 @@ export class PrintessPluginHost implements IPluginHost {
   public async getOldPriceInCentAsync(context: IPluginContext, oldPrice: number | null, params: {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
+    pureRecordCount?: number,
     printedRecordCount?: number
   }): Promise<number | null> {
     let ret: number | null = null;
@@ -528,6 +547,7 @@ export class PrintessPluginHost implements IPluginHost {
   public async getPriceCategoryLabelsAsync(context: IPluginContext, currentValue: INameValuePair[], params: {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
+    pureRecordCount?: number,
     printedRecordCount?: number
   }): Promise<INameValuePair[]> {
     let ret: INameValuePair[] = [];
@@ -830,6 +850,7 @@ export class PrintessPluginHost implements IPluginHost {
   public async getPriceInformationAsync(context: IPluginContext, currentInfo: IPriceInformation, params: {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
+    pureRecordCount?: number,
     printedRecordCount?: number
   }): Promise<IPriceInformation> {
     let ret = currentInfo;
@@ -1212,6 +1233,29 @@ export class PrintessPluginHost implements IPluginHost {
           const val = await PrintessPluginHost.waitForResult(plugin.getPhotobookSettingsAsync(context, ret));
 
           if (typeof val !== "undefined") {
+            ret = val;
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    return ret;
+  }
+
+  public async getTranslationKeyAsync(context: IPluginContext, currentLanguage: string): Promise<string> {
+    let ret: string = currentLanguage;
+    const plugins = this.getPlugins();
+
+    for (let i = 0; i < plugins.length; ++i) {
+      const plugin = plugins[i];
+
+      try {
+        if (typeof plugin.getTranslationKeyAsync === "function") {
+          const val = await PrintessPluginHost.waitForResult(plugin.getTranslationKeyAsync(context, ret));
+
+          if (typeof val !== "undefined" && val) {
             ret = val;
           }
         }

@@ -19,6 +19,7 @@ export interface IUiSelectors {
   cssVariantSwitchSelector?: string;
   cssQuantityInputSelector?: string;
   cssProductThumbnailImageSelector?: string;
+  cssProductThumbnailNavigationSelector?: string; // theme thumbnail strip, hidden when the slimUi "pageNavigation" feature is active
   cssProductLargePreviewImagesSelector?: string;
   cssCartItemLinkSelector?: string;
   cssCartItemImageSelector?: string;
@@ -86,6 +87,9 @@ export interface IShopifySettings extends IShopSettings {
   registrationUrl: string;
   redirectToCartAfterAddToBasketClick?: boolean
   cartLinkIsEditLink?: boolean;
+  cartItemPropertyName?: string;
+  cartItemPropertyValue?: string;
+  usePageCountInsteadOfPrintedRecordCount?: boolean;//The printedRecordCount will be written as _printessPageCount to the basket item.
   slimUi: {
     shopThemeName?: string;
     formInsertPosition: number;

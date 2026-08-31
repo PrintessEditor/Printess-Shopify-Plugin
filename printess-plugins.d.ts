@@ -35,9 +35,11 @@ export interface IEditorSettings {
   translationKey?: string;
   theme?: string;
   shopDomain?: string;
+  usePageCountInsteadOfPrintedRecordCount?: boolean;
 }
 
 export type TVariantPersonalizationOption = "none" | "personalize" | "directAdd" | "both" //None: Not personalizable; personalize: Show Design Now Button; directAdd: Add printess item to basket without personalization; both: Has Design now button + Direct Add to basket button
+export type TSlimUiFeature = "pageNavigation"
 
 export interface IPrintessProductSettings {
   pageCountOptionName?: string
@@ -49,6 +51,9 @@ export interface IPrintessProductSettings {
   bookSettings?: iExternalBookSettings | null;
   personalizationMode?: TVariantPersonalizationOption | null;
   printQtyOption?: string | null;
+  theme?: string | null;
+  slimUiFeatures?: TSlimUiFeature | TSlimUiFeature[];
+  slimUiMerge1?: string | null;
 }
 
 export interface IPrintessVariantSettings {
@@ -182,6 +187,8 @@ export interface IPlugin {
     formFieldProperties: iFormFieldProperty[]
   }) => Promise<void>
 
+  onLoadSavedStateAsync?: (context: IPluginContext, shopData: IShopData) => Promise<void>;
+
   onCloseAsync?: (context: IPluginContext, params: {
     saveToken: string,
     thumbnailUrl: string,
@@ -199,6 +206,7 @@ export interface IPlugin {
   getPriceInCentAsync?: (context: IPluginContext, currentPrice: number, params: {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
+    pureRecordCount?: number,
     printedRecordCount?: number
   }) => Promise<number>
 
@@ -206,18 +214,21 @@ export interface IPlugin {
     currentFormFieldValues?: { name: string, value: string }[],
     price: number,
     numberOfPages: number,
-    printedRecordCount: number
+    pureRecordCount?: number,
+    printedRecordCount?: number
   }) => Promise<string>
 
   getOldPriceInCentAsync?: (context: IPluginContext, oldPrice: number | null, params: {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
+    pureRecordCount?: number,
     printedRecordCount?: number
   }) => Promise<number | null>
 
   getPriceCategoryLabelsAsync?: (context: IPluginContext, currentValue: INameValuePair[], params: {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
+    pureRecordCount?: number,
     printedRecordCount?: number
   }) => Promise<INameValuePair[]>
 
@@ -275,4 +286,6 @@ export interface IPlugin {
   }) => Promise<IPriceInformation>;
 
   onTabClose?: (context: IPluginContext, e: Event) => void;
+
+  getTranslationKeyAsync?(context: IPluginContext, currentLanguage: string): Promise<string>;
 }

@@ -4,7 +4,7 @@ import { IProduct as IShopifyProduct, IShortVariant, IVariant as IShopifyVariant
 import { PrintessShopifyGraphQlApi } from "./printess-graphql-api.js";
 import { IIntegrationButton, ISessionSettings, IShopifySettings, IUrlParams, ICartItem, IIntegration, IImageDimensionFormFields, TImageFormat, IPluginContainer } from "./printess-shopify.d";
 import { iExternalBookSettings, iExternalImage, iMergeTemplate, iPrintessApi, iPrintessComponent, IProduct } from "./printess-editor.d";
-import { IShopData } from "../../../editor/custom-ui/printess-editor.js";
+import { IShopData } from "./printess-editor.d";
 import { IPrintessPriceConfig, PrintessPriceCalculator } from "./printess-price-calculator.js";
 import { INameValuePair, IPluginContext, IPlugin, TUiType, IEditorSettings, IFormFieldMapping, IPrintessProduct, IPrintessProductSettings, IPrintessProductVariant, IPrintessVariantSettings } from "./printess-plugins.d"
 import { PrintessPluginHost } from "./printess-plugin-host.js";
@@ -351,7 +351,7 @@ export class PrintessShopify implements IIntegration {
         if (typeof printessShopSettings.useAdditionalPricing !== undefined && printessShopSettings.useAdditionalPricing !== null && printessShopSettings.useAdditionalPricing === true) {
           if (ret.product && ret.product.additionalPrices && ret.product.additionalPrices.value) {
             try {
-              ret.priceConfig = <IPrintessPriceConfig>JSON.parse(ret.product.additionalPrices.value);
+              ret.priceConfig = typeof ret.product.additionalPrices.value === "string" ? <IPrintessPriceConfig>JSON.parse(ret.product.additionalPrices.value) : (ret.product?.additionalPrices?.value ? ret.product?.additionalPrices?.value : null);
             } catch (e) {
               ret.priceConfig = null;
               console.error("PrintessIntegration: Unable to parse price configuration: " + JSON.stringify(e));
@@ -775,7 +775,7 @@ export class PrintessShopify implements IIntegration {
     const result: IMixedProductVariant = {
       ...variant,
       getId(): string {
-        return result.id.toString();
+        return result.id?.toString() || "";
       },
       getLabel(): string {
         return result.title;
@@ -1005,10 +1005,10 @@ export class PrintessShopify implements IIntegration {
 
         const variant = PrintessShopify.shortVariantCache[this.product.id].filter((x) => { return x.id === variantId });
 
-        if (variant) {
+        if (variant && variant.length > 0) {
           const variantOptions: Record<string, string> = {};
 
-          variant[variantId].options.forEach((x) => {
+          variant[0].options.forEach((x) => {
             variantOptions[x.optionName] = x.optionValue;
           });
 
@@ -1353,7 +1353,7 @@ export class PrintessShopify implements IIntegration {
       }
     }
 
-    await this.editor.show(templateName, currentSession);
+    await this.editor.show(templateName, currentSession, currentVariant);
 
     //in case we have unsaved projects due to login action, make sure wqe are creating them now
     const createdSaveStates = await this.createUnsavedProjectStatesAsync();
@@ -1776,6 +1776,10 @@ export class PrintessShopify implements IIntegration {
       return;
     }
 
+    if (this.configuration.cartItemPropertyName && this.configuration.cartItemPropertyValue && params.propertyValuesToWrite) {
+      params.propertyValuesToWrite[this.configuration.cartItemPropertyName] = this.configuration.cartItemPropertyValue;
+    }
+
     if (this.mode === "ProductPage") {
       this.setProductFormPrintessValues(params.saveToken, params.thumbnailUrl, params.propertyValuesToWrite);
 
@@ -1792,7 +1796,37 @@ export class PrintessShopify implements IIntegration {
 
           const addToBasketButton = form.querySelector(this.configuration.uiSelectors?.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart,.add-to-cart-button,#AddToCart') as HTMLButtonElement | null;
 
-          if (this.isSaveTokenEditing) {
+          if (this.priceConfig) {
+            PrintessSharedTools.onHookFetch((url: string, init: RequestInit | null, response: Response): "cancel" | "continue" => {
+              return "continue";
+            }, undefined, (args: any[]) => {
+              if (args && Array.isArray(args) && args.length > 1 && typeof args[0] === "string" && args[0]) {
+                if (PrintessShopify.urlIsCartAdd(args[0])) {
+                  if (args[1] && args[1].body && args[1].body instanceof FormData) {
+                    const formData = args[1].body as FormData;
+
+                    const formObject = Object.fromEntries(formData.entries());
+                    const propertiesToCopy: Record<string, string> = {};
+
+                    for (const property in formObject) {
+                      if (formObject.hasOwnProperty(property) && property !== "_printessProperties") {
+                        if (property && property.startsWith("properties[") && property.endsWith("]")) {
+                          const propertyName = property.substring("properties[".length, property.length - 1);
+
+                          propertiesToCopy[propertyName] = (formObject[property] || "").toString();
+                          //formData.delete("properties[" + propertyName + "]");
+                        }
+                      }
+                    }
+
+                    formData.set("properties[_printessProperties]", JSON.stringify(propertiesToCopy));
+                  }
+                };
+              }
+            });
+          }
+
+          if (this.isSaveTokenEditing || (!this.priceConfig && this.configuration.redirectToCartAfterAddToBasketClick === true)) {
             PrintessSharedTools.onHookFetch((url: string, init: RequestInit | null, response: Response): "cancel" | "continue" => {
               if (PrintessShopify.urlIsCartAdd(url)) {
                 if (init && init.body) {
@@ -1871,6 +1905,19 @@ export class PrintessShopify implements IIntegration {
         }))) {
           return;
         }
+      }
+
+      //If the product is having a custom prizing, we need to collect the cart item properites into our _printessProperties property
+      if (this.priceConfig) {
+        const propertiesToCopy: Record<string, string> = {};
+
+        for (const property in params.propertyValuesToWrite) {
+          if (params.propertyValuesToWrite.hasOwnProperty(property) && property !== "_printessProperties") {
+            propertiesToCopy[property] = (params.propertyValuesToWrite[property] || "").toString();
+          }
+        }
+
+        params.propertyValuesToWrite["_printessProperties"] = JSON.stringify(propertiesToCopy);
       }
 
       await PrintessShopify.replaceBasketItem(this.cartItem, params.variant, params.propertyValuesToWrite, this.urlParams?.quantity || this.cartItem.quantity);
@@ -2031,6 +2078,32 @@ export class PrintessShopify implements IIntegration {
     return this.convertShopifyVariantToPrintessVariant(variant);
   }
 
+  private static getLabelControl(element: Element): HTMLLabelElement | null {
+    //Try to find the corresponding label and click on it, just in case the variant selector used does not listen on value changes
+    const radioId = element.getAttribute("id");
+    let ret: HTMLLabelElement | null = null;
+
+    if (radioId) {
+      ret = document.querySelector(`label[for="${radioId}"]`) as HTMLLabelElement || null;
+    }
+
+    if (!ret) {
+      //Some themes nest the input directly inside the label instead of using the "for" attribute
+      let ancestor: HTMLElement | null = element.parentElement;
+
+      for (let i = 0; i < 5 && ancestor; ++i) {
+        if (ancestor.tagName === "LABEL") {
+          ret = ancestor as HTMLLabelElement;
+          break;
+        }
+
+        ancestor = ancestor.parentElement;
+      }
+    }
+
+    return ret;
+  }
+
   public async onFormfieldChangedAsync(context: IPluginContext, params: {
     formFieldName: string,
     formFieldValue: string,
@@ -2084,25 +2157,24 @@ export class PrintessShopify implements IIntegration {
 
             el.setAttribute('checked', true.toString());
             (el as HTMLInputElement).checked = true;
+            (el as HTMLInputElement).dispatchEvent(new Event('change', { bubbles: true }));
 
             //Try to find the corresponding label and click on it, just in case the variant selector used does not listen on value changes
-            const radioId = el.getAttribute("id");
+            let radioLabel: HTMLLabelElement | null = PrintessShopify.getLabelControl(el);
 
-            if (radioId) {
-              const radioLabel = document.querySelector(`label[for="${radioId}"]`) as HTMLLabelElement;
+            if (radioLabel) {
+              //setTimeout(function () {
+              radioLabel.click();
 
-              if (radioLabel) {
-                setTimeout(function () {
-                  radioLabel.click();
-
-                  if (params.newVariant) {
-                    const url = new URL(window.location.href);
-                    url.searchParams.set("variant", params.newVariant.getId());
-                    window.history.pushState({}, '', url);
-                  }
-                }, 0);
+              if (params.newVariant) {
+                const url = new URL(window.location.href);
+                url.searchParams.set("variant", params.newVariant.getId());
+                window.history.pushState({}, '', url);
               }
+              //}, 0);
             }
+
+
           } else {
             if (!valueChanged && (el as HTMLInputElement).checked === true) {
               valueChanged = true;
@@ -2264,7 +2336,8 @@ export class PrintessShopify implements IIntegration {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
     minPages?: number | null,
-    printedRecordCount?: number
+    pureRecordCount?: number
+    printedRecordCount?: number,
   }): Promise<number> {
     let ret: number = currentPrice;
     let additionalPages = 0;
@@ -2292,7 +2365,8 @@ export class PrintessShopify implements IIntegration {
     currentFormFieldValues?: { name: string, value: string }[],
     price: number,
     numberOfPages: number,
-    printedRecordCount: number
+    pureRecordCount?: number
+    printedRecordCount?: number
   }): Promise<string> {
     return PrintessShopify.formatPrice(priceToRender, this.configuration.priceFormat, true);
   }
@@ -2385,7 +2459,8 @@ export class PrintessShopify implements IIntegration {
       theme: theme || this.configuration.printessThemeName || "DEFAULT",
       shopDomain: this.configuration.internalShopDomain,
       translationKey: this.configuration.translationKey || "auto",
-      hidePriceInEditor: typeof this.configuration.hidePricesInEditor === "boolean" ? this.configuration.hidePricesInEditor : false
+      hidePriceInEditor: typeof this.configuration.hidePricesInEditor === "boolean" ? this.configuration.hidePricesInEditor : false,
+      usePageCountInsteadOfPrintedRecordCount: this.configuration.usePageCountInsteadOfPrintedRecordCount === true
     };
 
     return ret;
@@ -2402,6 +2477,7 @@ export class PrintessShopify implements IIntegration {
   public async getOldPriceInCentAsync(context: IPluginContext, oldPrice: number | null, params: {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
+    pureRecordCount?: number,
     printedRecordCount?: number
   }): Promise<number | null> {
     let ret: number | null = oldPrice;
