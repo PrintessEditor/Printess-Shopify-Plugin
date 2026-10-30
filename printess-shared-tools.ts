@@ -1,3 +1,29 @@
+/**
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2026 Printess GmbH & Co. Kg
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Printess GmbH & Co. Kg does not provide any support for this plugin.
+ */
+
 import { iFormFieldNameValue, iMergeTemplate, MergeMode } from "./printess-editor.d"
 
 export interface ICreateSaveTokenParams {
@@ -420,6 +446,34 @@ export class PrintessSharedTools {
       imageFormat: ((images[0].height ?? 0) === (images[0].width ?? 0)) ? "square" : ((images[0].width ?? 0) > (images[0].height ?? 0) ? "landscape" : "portrait"),
       file: images[0].data
     } as IImageInfo;
+  }
+
+  /**
+   * Resolves a shop relative route through "window.Shopify.routes.root" so localized
+   * shops (e.g. "/en-de/") and shops running in a sub directory keep working.
+   * Falls back to a root relative url if the theme does not provide the global.
+   */
+  public static getShopifyRouteUrl(path: string): string {
+    const route = (path || "").replace(/^\/+/, "");
+
+    let root: string = "/";
+
+    try {
+      const shopifyRoot = (<any>window)["Shopify"]?.routes?.root;
+
+      if (typeof shopifyRoot === "string" && shopifyRoot) {
+        root = shopifyRoot.endsWith("/") ? shopifyRoot : shopifyRoot + "/";
+      }
+    }
+    catch {
+      root = "/";
+    }
+
+    return root + route;
+  }
+
+  public static getShopifyCartUrl(): string {
+    return PrintessSharedTools.getShopifyRouteUrl("cart");
   }
 
   public static removeParamsFromUrl(browserUrl: string, paramName?: string | string[]): string {

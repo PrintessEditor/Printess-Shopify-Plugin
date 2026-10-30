@@ -1,7 +1,33 @@
+/**
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2026 Printess GmbH & Co. Kg
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Printess GmbH & Co. Kg does not provide any support for this plugin.
+ */
+
 import { iExternalBookSettings, iExternalImage, iExternalPriceDisplay, iExternalProductPriceInfo, iFormFieldNameValue, iFormFieldProperty, iMergeTemplate, iPrintessApi, iPrintessComponent, IShopData } from "./printess-editor.d";
 import { IImageDimensionFormFields, IIntegration, IPluginContainer, ISessionSettings } from "./printess-shopify.d";
 import { PrintessSharedTools } from "./printess-shared-tools.js";
-import { IFormFieldMapping, IPlugin, IPluginContext, INameValuePair, ISaveFormFieldAsPropertyEntry, IPriceInformation, IPrintessProduct, IPrintessProductVariant, IPrintessProductSettings } from "./printess-plugins.d";
+import { IFormFieldMapping, IPlugin, IPluginContext, INameValuePair, ISaveFormFieldAsPropertyEntry, IPriceInformation, IPrintessProduct, IPrintessProductVariant, IPrintessProductSettings, IEditorSettings } from "./printess-plugins.d";
 import { IPluginHost, PrintessPluginHost } from "./printess-plugin-host.js";
 
 interface IEditorContext {
@@ -307,6 +333,28 @@ export class PrintessEditorFrontend {
     });
   }
 
+  public static async loadSaveToken(saveToken: string): Promise<boolean> {
+    if (!saveToken || !saveToken.startsWith("st:")) {
+      console.error("Printess Integration: Invalid save token provided");
+    }
+
+    if (!PrintessEditorFrontend._editorIsOpen) {
+      console.error("Printess Integration: Editor not initilaized yet");
+      return false;
+    }
+
+    const api = PrintessEditorFrontend.getApi();
+
+    if (!api) {
+      console.error("Printess Integration: API not initilaized yet");
+      return false;
+    }
+
+    await api.loadTemplateAndFormFields(saveToken, [], [], null, null, true, "published");
+
+    return true;
+  }
+
   public static async show(context: IEditorContext, templateNameOrSaveToken: string, formFields: iFormFieldNameValue[], mergeTemplates: iMergeTemplate[], formFieldProperties?: iFormFieldProperty[], additionalAttachParams?: Record<string, any>): Promise<boolean> {
     if (PrintessEditorFrontend._editorIsOpen) {
       return false;
@@ -327,7 +375,7 @@ export class PrintessEditorFrontend {
         return false;
       }
 
-      await PrintessEditorFrontend._api.loadTemplateAndFormFields(templateNameOrSaveToken, mergeTemplates, formFields, null, null, true);
+      await PrintessEditorFrontend._api.loadTemplateAndFormFields(templateNameOrSaveToken, mergeTemplates, formFields, null, null, true, "published");
 
       PrintessEditorFrontend._component.show();
     }
@@ -527,6 +575,30 @@ export class PrintessEditor {
     return ret || null;
   }
 
+  /**
+   * Drops the basket id, so the next call to getOrGenerateBasketId() starts a new basket session.
+   *
+   * Used when the shop tells us that the customer logged out: the id lives in the browsers storage until it is
+   * removed explicitly, so on shared devices - kiosk systems for example - the next customer would otherwise
+   * inherit the basket of his predecessor together with the images uploaded into it.
+   */
+  public static clearBasketId(): void {
+    try {
+      localStorage.removeItem("printessUniqueBasketId");
+    }
+    catch (e) {
+      console.warn("Unable to remove basket id from local storage.");
+    }
+
+    try {
+      sessionStorage.removeItem("printessUniqueBasketId");
+    }
+    catch (e) {
+    }
+
+    delete (window as any)["printessUniqueBasketId"];
+  }
+
   public async getPriceRelevantData(priceInfo?: iExternalProductPriceInfo | null): Promise<IPriceRelevantInfo> {
     const ret: IPriceRelevantInfo = {
       formFields: []
@@ -708,6 +780,49 @@ export class PrintessEditor {
     return null;
   }
 
+  /** The entry configured for a form field, which can be addressed by its name as well as by its ui label. */
+  private findFormFieldAsPropertyEntry(name?: string | null, formFieldLabel?: string | null): ISaveFormFieldAsPropertyEntry | undefined {
+    return (name ? this._formFieldsAsProperties.find((x) => { return x.formfieldName === name }) : undefined)
+      || (formFieldLabel ? this._formFieldsAsProperties.find((x) => { return x.formfieldName === formFieldLabel }) : undefined);
+  }
+
+  /**
+   * Values of the form fields configured to be written to the cart item as separate properties, in the order they are
+   * configured in. The values the editor reports at that moment win, form fields it does not report fall back to the
+   * value collected when the customer changed them and finally to the configured default value.
+   */
+  private getFormFieldPropertyValues(formFields?: { name: string, value: string, formFieldLabel?: string | null, valueLabel?: string | null }[] | null): Record<string, string> {
+    const ret: Record<string, string> = {};
+    const sessionValues = this._session.formFieldsAsProperties || {};
+
+    //The configuration order is the order the properties show up in at the cart item, so never sort them here.
+    this._formFieldsAsProperties.forEach((x) => {
+      const propertyName = x.propertyName || x.formfieldName;
+      const formField = (formFields || []).find((y) => {
+        return y.name === x.formfieldName || (!!y.formFieldLabel && y.formFieldLabel === x.formfieldName);
+      });
+
+      if (formField) {
+        //The value label is what the customer sees in the editor, the raw value is the fallback for form fields without one.
+        ret[propertyName] = formField.valueLabel || formField.value;
+      } else if (typeof sessionValues[propertyName] !== "undefined") {
+        //Collected while the customer was changing form fields, the editor only reports the price relevant ones.
+        ret[propertyName] = sessionValues[propertyName];
+      } else if (x.defaultValue) {
+        ret[propertyName] = x.defaultValue;
+      }
+    });
+
+    //Values of entries that are not configured any more, they are kept to not lose them on a basket item edit.
+    for (const propertyName in sessionValues) {
+      if (sessionValues.hasOwnProperty(propertyName) && typeof ret[propertyName] === "undefined") {
+        ret[propertyName] = sessionValues[propertyName];
+      }
+    }
+
+    return ret;
+  }
+
   private async onAddToBasketAsync(saveToken: string, thumbnailUrl: string): Promise<void> {
     const priceRelevantData = await this.getPriceRelevantData();
 
@@ -716,10 +831,11 @@ export class PrintessEditor {
     }
 
     const propertyValuesToWrite: Record<string, string> = {
-      ...this._session.formFieldsAsProperties || {},
+      ...this.getFormFieldPropertyValues(priceRelevantData.formFields),
       _printessSettings: JSON.stringify({
         ...this._session,
         printTemplateName: priceRelevantData.variant?.getPrintTemplateName() ? priceRelevantData.variant?.getPrintTemplateName() : (this._product.getPrintTemplateName() ? this._product.getPrintTemplateName() : this._session.printTemplateName || ""),
+        printessProductType: this._product.getSettings()?.productType || this._session.printessProductType || "",
       })
     };
 
@@ -758,16 +874,8 @@ export class PrintessEditor {
       records.printed = priceRelevantData.printedRecordCount || 0;
     }
 
-    const editorSettings = this._pluginHost.getEditorSettings(this.getPluginContext(this._variant), null);
-
     if (records.count || records.printed) {
       propertyValuesToWrite["_printessRecords"] = JSON.stringify(records);
-
-      if (editorSettings && editorSettings.usePageCountInsteadOfPrintedRecordCount === true) {
-        if (records.printed && records.printed > 0) {
-          propertyValuesToWrite["_printessPageCount"] = records.printed.toString();
-        }
-      }
     }
 
     if (priceRelevantData.formFields && priceRelevantData.formFields.length > 0) {
@@ -851,6 +959,57 @@ export class PrintessEditor {
     return variant;
   }
 
+  /**
+   * Shops always deliver a variant, even for products without real variants. The shop plugin knows whether a variant is such an implicit
+   * default one, this heuristic only covers plugins not implementing "isDefaultVariant" (shopify names its default variant "Default Title").
+   */
+  private static getVariantDisplayLabel(variant: IPrintessProductVariant | null): string {
+    if (!variant) {
+      return "";
+    }
+
+    if (typeof variant.isDefaultVariant === "function") {
+      return variant.isDefaultVariant() ? "" : (variant.getLabel() || "");
+    }
+
+    const label = variant.getLabel() || "";
+
+    return label.trim().toLowerCase() === "default title" ? "" : label;
+  }
+
+  /** Resolves the product information displayed for a product, honoring the "savedDesignProductName" editor setting. */
+  private getProductDisplayName(variant?: IPrintessProductVariant | null, editorSettings?: IEditorSettings | null): string {
+    const currentVariant = typeof variant === "undefined" ? this._variant : variant;
+    const settings = editorSettings || this._pluginHost.getEditorSettings(this.getPluginContext(currentVariant || null));
+    const productName = this._product.getLabel() || "";
+    const variantName = PrintessEditor.getVariantDisplayLabel(currentVariant || null);
+    const hasVariantName = variantName !== "" && variantName !== productName;
+
+    switch (settings.savedDesignProductName) {
+      case "variantName":
+        return hasVariantName ? variantName : productName;
+
+      case "productAndVariantName":
+        return hasVariantName ? (productName + " - " + variantName).trim() : productName;
+
+      default:
+        return productName;
+    }
+  }
+
+  /** The price text of the product page element the "priceDisplayElementSelector" editor setting points to, null if there is none. */
+  private readPriceFromProductPage(selector: string): string | null {
+    try {
+      const text = (document.querySelector(selector)?.textContent || "").trim();
+
+      return text || null;
+    } catch (e) {
+      console.error(e);//An invalid selector must not break the price display, it falls back to the calculated price
+    }
+
+    return null;
+  }
+
   private static extractNumber(inputStr: string): number {
     let c = "0123456789";
 
@@ -879,6 +1038,27 @@ export class PrintessEditor {
     return ret;
   }
 
+  //Sets the initial print qty from the given form field values in case the print qty option is used and no print qty is known yet.
+  //Without that, the print qty would only be set in case the customer changes the form field inside the editor.
+  private initPrintQtyFromFormFields(formFields: { name: string, value: string, formFieldLabel?: string | null, valueLabel?: string | null }[]): void {
+    const printQtyOption = (this._session.printQtyOption || "").toLowerCase();
+
+    if (!printQtyOption || this._session.printQty || !formFields) {
+      return;
+    }
+
+    for (const formField of formFields) {
+      if ([formField.name, formField.formFieldLabel].some(x => (x || "").toLowerCase() === printQtyOption)) {
+        const number = PrintessEditor.parseNumberFromValues([formField.valueLabel || "", formField.value]);
+
+        if (!isNaN(number) && isFinite(number)) {
+          this._session.printQty = number;
+          return;
+        }
+      }
+    }
+  }
+
   private async onFormFieldChangedAsync(name: string, value: string, tag: string, label: string, ffLabel: string): Promise<void> {
     const formFieldOptionName = PrintessEditor.GetPageCountFormFieldName(this._product.getSettings());
 
@@ -896,24 +1076,15 @@ export class PrintessEditor {
       }
     }
 
-    let entry = this._formFieldsAsProperties.find((x) => { x.formfieldName === name });
+    const entry = this.findFormFieldAsPropertyEntry(name, ffLabel);
 
     if (entry) {
       if (!this._session.formFieldsAsProperties) {
         this._session.formFieldsAsProperties = {};
       }
 
-      this._session.formFieldsAsProperties[entry.propertyName || entry.formfieldName] = value;
-    } else {
-      entry = this._formFieldsAsProperties.find((x) => { x.formfieldName === ffLabel });
-
-      if (entry) {
-        if (!this._session.formFieldsAsProperties) {
-          this._session.formFieldsAsProperties = {};
-        }
-
-        this._session.formFieldsAsProperties[entry.propertyName || entry.formfieldName] = label;
-      }
+      //The value label is what the customer sees in the editor, the raw value is the fallback for form fields without one.
+      this._session.formFieldsAsProperties[entry.propertyName || entry.formfieldName] = label || value;
     }
 
     if (this._session.printQtyOption && ([name, ffLabel].includes(this._session.printQtyOption))) {
@@ -1011,8 +1182,14 @@ export class PrintessEditor {
       });
     }
 
+    const editorSettings = this._pluginHost.getEditorSettings(this.getPluginContext(this._variant), null);
+
+    if (editorSettings.priceDisplayElementSelector) {
+      renderedPrice = this.readPriceFromProductPage(editorSettings.priceDisplayElementSelector) || renderedPrice;
+    }
+
     let additionalPriceInfo: IPriceInformation = {
-      productName: (variant.getLabel() ? variant.getLabel() : (this._product.getLabel() ? this._product.getLabel() : "")),
+      productName: this.getProductDisplayName(variant),
       legalNotice: "",
       infoUrl: ""
     };
@@ -1074,8 +1251,6 @@ export class PrintessEditor {
         });
       }
     }
-
-    const editorSettings = this._pluginHost.getEditorSettings(this.getPluginContext(this._variant), null);
 
     let info: iExternalPriceDisplay = {
       price: editorSettings.hidePriceInEditor === true ? "" : renderedPrice,
@@ -1225,7 +1400,7 @@ export class PrintessEditor {
       shopToken: editorSettings.shopToken || "",
       translationLanguage: editorSettings.translationKey,
       showLoadingScreen: !(customLoader && typeof customLoader.show === "function" && typeof customLoader.hide === "function"),
-      theme: (<any>this._product)?.theme?.value || editorSettings.theme || "DEFAULT",
+      theme: editorTheme,
 
       getBasketIdAsync(): Promise<string | null> {
         return PrintessEditor.getOrGenerateBasketId(that._pluginHost, that.getPluginContext(null));
@@ -1350,6 +1525,36 @@ export class PrintessEditor {
 
     return photobookSettings || null;
   }
+
+  public async loadSaveToken(saveToken: string): Promise<boolean> {
+    if (!await PrintessEditorFrontend.loadSaveToken(saveToken)) {
+      return false;
+    }
+
+    //In case of save token opening, formField changed is not called for price relevant data, we have to do that now
+    const priceRelevantData = await this.getPriceRelevantData();
+
+    if (priceRelevantData.formFields) {
+      const that = this;
+
+      await Promise.all(priceRelevantData.formFields.map(async (x) => {
+        await that.onFormFieldChangedAsync(x.name, x.value, "", x.valueLabel || "", x.formFieldLabel || "");
+      }));
+    }
+
+    //The shop did not provide a print qty value, so the template default is used. Read it from the editor, otherwise
+    //it would only be set in case the customer changes the form field.
+    if (this._session.printQtyOption && !this._session.printQty) {
+      try {
+        this.initPrintQtyFromFormFields((await this.getPriceRelevantData()).formFields || []);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    return true;
+  }
+
   public async show(templateNameOrSaveToken: string, session?: ISessionSettings, variant?: IPrintessProductVariant | null): Promise<boolean> {
     if (this._editorIsOpen) {
       return false;
@@ -1367,7 +1572,8 @@ export class PrintessEditor {
 
     let context = this.getPluginContext(this._variant);
 
-    this._formFieldsAsProperties = PrintessPluginHost.parseFormFieldsAsProperties(await this._pluginHost.getFormFieldsAsPropertiesAsync(context));
+    //The product settings extend the entries the plugins provided, they never replace them.
+    this._formFieldsAsProperties = PrintessPluginHost.mergeFormFieldsAsProperties(await this._pluginHost.getFormFieldsAsPropertiesAsync(context), this._product.getSettings()?.formFieldsAsProperties);
 
     this.updateProduct();
 
@@ -1378,13 +1584,22 @@ export class PrintessEditor {
     const templateNameToApply = templateNameOrSaveToken ? templateNameOrSaveToken : (this._variant && this._variant.getTemplateName() ? this._variant.getTemplateName() : this._product.getTemplateName() || "");
     const templateNameIsSaveToken: boolean = templateNameOrSaveToken.startsWith("st:");
     const formFieldMappings = await this._pluginHost.getFormFieldMappingsAsync(context);
+    const shopUserId = await this.getUserId() || "";
+    //Same source the editor itself is handed (see the context's getBasketIdAsync): a plugin supplied id wins, then
+    //the stored one, and a cleared one is regenerated right here. Asking the plugin host directly would yield
+    //nothing for shops without a plugin implementing it, and the import would silently lose its basket scope.
+    const basketId = await PrintessEditor.getOrGenerateBasketId(this._pluginHost, context) || "";
 
     this._currentTemplateNameOrSaveToken = templateNameIsSaveToken ? templateNameToApply : "";
 
     const mergeTemplates = templateNameIsSaveToken ? [] : (this._variant.getMergeTemplates() ? PrintessSharedTools.parseMergeTemplate(this._variant.getMergeTemplates()) : (this._product.getMergeTemplates() ? PrintessSharedTools.parseMergeTemplate(this._product.getMergeTemplates()) : []));
 
+    //The shop side form field values before the form field mappings are applied, these are the names the print qty option refers to
+    let unmappedFormFields: INameValuePair[] = [];
+
     if (!templateNameIsSaveToken) {
-      formFields = await PrintessEditor.applyFormFieldMappings(this._pluginHost, context, PrintessEditor.MergeFormFieldValues(await this._pluginHost.getFormFieldsAsync(context, formFields), this._variant.getVariantOptions()), formFieldMappings);
+      unmappedFormFields = PrintessEditor.MergeFormFieldValues(await this._pluginHost.getFormFieldsAsync(context, formFields), this._variant.getVariantOptions());
+      formFields = await PrintessEditor.applyFormFieldMappings(this._pluginHost, context, unmappedFormFields, formFieldMappings);
 
       //Apply photobook theme
       if (this._product && this._product.getSettings() && this._product.getSettings()?.photobookTheme) {
@@ -1396,7 +1611,7 @@ export class PrintessEditor {
 
     if (typeof this._pluginHost.getAttachParametersAsync === "function") {
       attachParams = {
-        templateVersion: "publish",
+        templateVersion: "published",
         ...attachParams,
         ...await this._pluginHost.getAttachParametersAsync(context)
       };
@@ -1441,9 +1656,9 @@ export class PrintessEditor {
           shopData[x.name] = x.value;
         });
 
-        const productName = that._variant?.getLabel() || that._product.getLabel();
-
         const editorSettings = that._pluginHost.getEditorSettings(that.getPluginContext(that._variant));
+
+        const productName = that.getProductDisplayName(that._variant, editorSettings);
 
         const params: IShopData = {
           product: {
@@ -1503,31 +1718,20 @@ export class PrintessEditor {
       };
 
       attachParams["getShopProjectDisplayNameCallback"] = () => {
-        return this._session.projectName || that._product.getLabel(); //that._variant?.getLabel() ||
+        return this._session.projectName || that.getProductDisplayName();
       }
 
       attachParams["getShopProductDisplayNameCallback"] = () => {
-        return this._session.projectName || that._product.getLabel(); //that._variant?.getLabel() ||
+        return this._session.projectName || that.getProductDisplayName();
       }
     }
 
     const formFieldProperties: iFormFieldProperty[] = typeof this._pluginHost.getFormFieldPropertiesAsync === "function" ? (await this._pluginHost.getFormFieldPropertiesAsync(context)) : [];
 
-    if (session && session.printQtyOption && !session.printQty) {
-      //We should use the print qty  option, but did not get a print qty (this happens in case we are not editing a basket item)
-      //So try to get the current print qty from the given form field values
-      if (formFields && formFields.length > 0) {
-        formFields.forEach((x) => {
-          if (x.name === session.printQtyOption) {
-            const number = PrintessEditor.extractNumber(x.value);
-
-            if (!isNaN(number) && isFinite(number)) {
-              session.printQty = number;
-            }
-          }
-        });
-      }
-    }
+    //We should use the print qty option, but did not get a print qty (this happens in case we are not editing a basket item)
+    //So try to get the current print qty from the given form field values. This has to go into this._session, the passed session is only a copy source.
+    this.initPrintQtyFromFormFields(unmappedFormFields);
+    this.initPrintQtyFromFormFields(formFields);
 
     if (!(await this._pluginHost.doAllowOpenAsync(this.getPluginContext(this._variant), {
       formFieldProperties: formFieldProperties,
@@ -1548,6 +1752,8 @@ export class PrintessEditor {
     const editorContext = this.createContext();
 
     editorContext.translationLanguage = await this._pluginHost.getTranslationKeyAsync(context, editorContext.translationLanguage || "auto");
+
+    editorContext.theme = await this._pluginHost.getEditorThemeAsync(context, editorContext.theme || "DEFAULT");
 
     if (await PrintessEditorFrontend.show(editorContext, templateNameToApply, formFields, mergeTemplates, formFieldProperties, attachParams)) {
       const pageCountOptionName: string = PrintessEditor.GetPageCountFormFieldName(this._product.getSettings());
@@ -1592,12 +1798,36 @@ export class PrintessEditor {
         }
       }
 
+      //The shop did not provide a print qty value, so the template default is used. Read it from the editor, otherwise
+      //it would only be set in case the customer changes the form field.
+      if (this._session.printQtyOption && !this._session.printQty) {
+        try {
+          this.initPrintQtyFromFormFields((await this.getPriceRelevantData()).formFields || []);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
       await this._pluginHost.onOpenAsync(context, {
         formFieldProperties: formFieldProperties,
         formFields: formFields,
         mergeTemplates: mergeTemplates,
         templateName: templateNameToApply
       });
+
+      //Only a newly started design gets the users previously uploaded images, a saved design already carries its own ones
+      if (!templateNameIsSaveToken && this._pluginHost.getEditorSettings(context).autoImportUserImages === true) {
+        //Images are imported for identified customers only, unless the shop opted out of that. A basket id alone
+        //says nothing about who is sitting in front of the browser: on a shared device - a kiosk system, for
+        //example - it outlives the visitor it was created for and would hand his uploads to the next one. Not
+        //being able to tell counts as not logged in, the quiet import is the thing we want to avoid here.
+        const requiresLogin: boolean = this._pluginHost.getEditorSettings(context).autoImportRequiresLogin !== false;
+        const userIsLoggedIn: boolean = typeof this._pluginHost.userIsLoggedInAsync === "function" ? await this._pluginHost.userIsLoggedInAsync(context) : false;
+
+        if (!requiresLogin || userIsLoggedIn) {
+          await (this.getApi() as any | null)?.importImages(shopUserId || "", basketId);
+        }
+      }
 
       return true;
     } else {

@@ -1,9 +1,36 @@
+/**
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2026 Printess GmbH & Co. Kg
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Printess GmbH & Co. Kg does not provide any support for this plugin.
+ */
+
 import { IShopifySettings, IIntegrationButton, IUiSelectors, IUrlParams, ISlimUiMode, IIntegration, IImageDimensionFormFields, TImageFormat, IPluginContainer } from "./printess-shopify.d";
 import { IPrintessShopifyGraphQlApi, IProduct as IShopifyProduct, IShortVariant, IVariant as IShopifyVariant } from "./printess-graphql-api.d";
 import { PrintessShopifyGraphQlApi } from "./printess-graphql-api.js";
+import { PrintessPreloadedProduct } from "./printess-preloaded-product.js";
 import { iExternalImage, iExternalImageFrameDimensions, iFormFieldNameValue, iImage, iMergeTemplate, IProduct } from "./printess-editor.d";
 import { PrintessSharedTools } from "./printess-shared-tools.js";
-import { iSlimState, iSlimUiLoadParams } from "../../../slim-ui/slim/slim-ui.d";
+import { iSlimPreviewPosition, iSlimState, iSlimUiLoadParams } from "../../../slim-ui/slim/slim-ui.d";
 import { INameValuePair, IPlugin, IPluginContext, IPrintessProduct, IPrintessProductSettings, IPrintessProductVariant, IPrintessVariantSettings, TSlimUiFeature, TUiType } from "./printess-plugins.d"
 
 interface IThemeProductNodes {
@@ -32,6 +59,8 @@ export class PrintessShopifySlimUi implements IIntegration {
   private integrationButton: IIntegrationButton;
   private settings: IShopifySettings;
   private product: IShopifyProduct;
+  /** The product data rendered into the theme, null if it is not used for this product */
+  private preloadedProduct: PrintessPreloadedProduct | null = null;
   private productVariants: IShortVariant[];
   private currentVariant: IShortVariant;
   private usedVariantOptions: { name: string, values: string[] }[];
@@ -44,6 +73,33 @@ export class PrintessShopifySlimUi implements IIntegration {
   private mode: ISlimUiMode = "edit";
   private pluginContainer: IPluginContainer;
   private slimUiFeatures: TSlimUiFeature[] = [];
+  /**
+   * `personalizeButton` feature: the configured preview page as it was written - a preview document name or a page
+   * position - or null when the product does not configure one. Kept unresolved, as which of the two it is can only
+   * be decided once slim-ui has reported the template's preview documents.
+   */
+  private personalizePage: string | null = null;
+  /**
+   * `personalizeButton` feature: the page inside the configured preview document, zero based, or null where the
+   * product configures none - which is its first page. Only meaningful next to a document name: a page position
+   * addresses a single page already, so `getPersonalizePreviewPage()` ignores this there.
+   */
+  private personalizeDocumentPage: number | null = null;
+  /** So a value naming no document and no page of the template is reported once, not on every rendered preview. */
+  private personalizePageWarningLogged = false;
+
+  /**
+   * Which preview page `initThumbnails()` rendered onto each theme thumbnail, by thumbnail position -
+   * the lookup the `thumbnailNavigation` feature needs to turn a click into a `setPreview()` call.
+   * Sparse where a thumbnail has no preview page behind it (a product photo the merchant added).
+   */
+  private previewPagesByThumbnailIndex: Array<iSlimPreviewPosition> = [];
+
+  /**
+   * The thumbnail slot slim-ui's current page belongs on, as last set from here. Only read on editor builds
+   * without `getPreview()`, which is the authority wherever it exists - see `getCurrentPreviewThumbnailIndex()`.
+   */
+  private currentPreviewThumbnailIndex = 0;
   private pageNavigationContainer: HTMLDivElement | null = null;
 
   private static fullVariantCache: Record<number, IShopifyVariant<number>> = {};
@@ -92,7 +148,7 @@ export class PrintessShopifySlimUi implements IIntegration {
         ret.cssProductInfoSelector = ret.cssProductInfoSelector || ".product-single__meta";
         ret.cssProductMediaSelector = ret.cssProductMediaSelector || "[data-product-images]";
         ret.cssImageSelector = ret.cssImageSelector || ".image-element";
-        ret.cssProductFormSelector = ret.cssProductFormSelector || 'form[action="/cart/add"]';
+        ret.cssProductFormSelector = ret.cssProductFormSelector || 'form[action$="/cart/add"]';
         ret.cssVariantSwitchSelector = ret.cssVariantSwitchSelector || "[data-dynamic-variants-enabled]";
         ret.cssPriceTextSelector = ret.cssPriceTextSelector || ".product__price";
         ret.cssQuantityInputSelector = ret.cssQuantityInputSelector || '[name="quantity"],[name="qty"]';
@@ -103,7 +159,7 @@ export class PrintessShopifySlimUi implements IIntegration {
 
     ret.cssProductContainerSelector = ret.cssProductContainerSelector || 'product-info .product';
     ret.cssProductInfoSelector = ret.cssProductInfoSelector || '.product__info-wrapper > .product__info-container';
-    ret.cssProductFormSelector = ret.cssProductFormSelector || 'form[data-type="add-to-cart-form"],form[action="/cart/add"][id^="product-form-template"],form.shopify-product-form[id^=product-form-template],form.product-single__form';
+    ret.cssProductFormSelector = ret.cssProductFormSelector || 'form[data-type="add-to-cart-form"],form[action$="/cart/add"][id^="product-form-template"],form.shopify-product-form[id^=product-form-template],form.product-single__form';
     ret.cssVariantSwitchSelector = ret.cssVariantSwitchSelector || 'variant-selects,variant-picker,.selector-wrapper,variant-radios,.product-form__controls-group,variant-picker__form,variant-selects';
     ret.cssProductMediaSelector = ret.cssProductMediaSelector || "media-gallery,.product-single__media-wrapper,.product__media";
     ret.cssImageSelector = ret.cssImageSelector || "slider-component ul li .product__media img,slider-component ul li .product__media img";
@@ -348,6 +404,277 @@ export class PrintessShopifySlimUi implements IIntegration {
   }
 
   /**
+   * The layout snippet search tags slim-ui is started with, read leniently as the metafield is written by hand as
+   * well as by the account portal: a list of tags or a comma separated string. Null when there are none, as slim-ui
+   * takes even an empty list over the template's own tags.
+   */
+  private static parseLayoutSnippetSearchTags(productSettings: IPrintessProductSettings | null | undefined): string[] | null {
+    const value = productSettings?.layoutSnippetSearchTags;
+
+    if (typeof value === "undefined" || value === null) {
+      return null;
+    }
+
+    const entries = Array.isArray(value) ? value : ("" + value).split(",");
+    const tags: string[] = [];
+
+    for (const entry of entries) {
+      const tag = typeof entry === "string" ? entry.trim() : "";
+
+      if (tag && tags.indexOf(tag) < 0) {
+        tags.push(tag);
+      }
+    }
+
+    return tags.length > 0 ? tags : null;
+  }
+
+  /**
+   * The preview page the `personalizeButton` feature jumps to, as written. Read leniently, as the metafield is
+   * written by hand as well as by the account portal, so the value can arrive as a number or as a string. It is
+   * deliberately not interpreted here: a document name can only be recognized against a loaded template, so
+   * anything non empty is carried through and `getPersonalizePreviewPage()` decides what it names.
+   */
+  private static parsePersonalizePage(productSettings: IPrintessProductSettings | null | undefined): string | null {
+    //Cast, as a hand written metafield can carry a document name although the setting is typed as a number.
+    const value = productSettings?.slimUiPersonalizePageIndex as number | string | null | undefined;
+
+    if (typeof value === "undefined" || value === null) {
+      return null;
+    }
+
+    const text = ("" + value).trim();
+
+    return text === "" ? null : text;
+  }
+
+  /**
+   * The page inside the configured preview document, as written. Read leniently like `parsePersonalizePage()`, and
+   * anything that is not a page number is dropped rather than reported: the setting is optional, so falling back to
+   * the document's first page is the same as leaving it empty, while a document that has no such page is reported
+   * by `ensurePersonalizeButton()`.
+   */
+  private static parsePersonalizeDocumentPage(productSettings: IPrintessProductSettings | null | undefined): number | null {
+    //Cast, as a hand written metafield can carry the page as a string although the setting is typed as a number.
+    const value = productSettings?.slimUiPersonalizeDocumentPageIndex as number | string | null | undefined;
+
+    if (typeof value === "undefined" || value === null) {
+      return null;
+    }
+
+    const text = ("" + value).trim();
+
+    if (text === "") {
+      return null;
+    }
+
+    const index = parseInt(text, 10);
+
+    return isNaN(index) || !isFinite(index) || index < 0 ? null : index;
+  }
+
+  /**
+   * Resolves the configured value to the preview document and page `setPreview()` takes. A preview document of that
+   * name is looked for first and wins, so a template whose documents happen to be named "1" and "2" stays
+   * addressable by name; only a value no document carries is read as a page position. Returns null when it names
+   * neither, which is what keeps the button off a template it cannot navigate.
+   *
+   * The page inside a named document comes from `personalizeDocumentPage`. A page position needs none, as it counts
+   * across the documents and so addresses one page on its own.
+   */
+  private getPersonalizePreviewPage(): iSlimPreviewPosition | null {
+    const value = this.personalizePage;
+
+    if (value === null) {
+      return null;
+    }
+
+    const previews = this.slimUi && this.slimUi.previews && this.slimUi.previews.length > 0 ? this.slimUi.previews : null;
+    const namedPreviewIndex = PrintessShopifySlimUi.findPreviewByDocumentName(previews, value);
+
+    if (previews && namedPreviewIndex >= 0) {
+      //`docName` names the whole document and the pages in it carry no name of their own, so which page of it the
+      //personalization sits on is configured separately - and without that it is the first page, as it always was.
+      const pageIndex = this.personalizeDocumentPage === null ? 0 : this.personalizeDocumentPage;
+
+      //A page the document does not have cannot be switched to, so the button stays off instead of jumping to a
+      //page nobody configured. Reported below, as a page miscounted by one looks exactly like a name not found.
+      return pageIndex < previews[namedPreviewIndex].pageCount ? { previewIndex: namedPreviewIndex, pageIndex: pageIndex } : null;
+    }
+
+    //No document of that name, so the value is meant as a page position - the only thing accepted before names were.
+    const index = parseInt(value, 10);
+
+    if (isNaN(index) || !isFinite(index) || index < 0) {
+      return null;
+    }
+
+    return PrintessShopifySlimUi.resolvePreviewPagePosition(previews, index);
+  }
+
+  /**
+   * The index of the preview document carrying a name, or -1. Compared trimmed and case insensitively: the name is
+   * typed by hand into the metafield and was typed by hand into the template, so a difference in case or padding is
+   * an accident rather than an intent to name something else.
+   */
+  private static findPreviewByDocumentName(previews: iSlimState["previews"] | null, name: string): number {
+    const wanted = name.trim().toLowerCase();
+
+    if (!previews || wanted === "") {
+      return -1;
+    }
+
+    for (let previewIndex = 0; previewIndex < previews.length; ++previewIndex) {
+      const docName = previews[previewIndex].docName;
+
+      if (typeof docName === "string" && docName.trim().toLowerCase() === wanted) {
+        return previewIndex;
+      }
+    }
+
+    return -1;
+  }
+
+  /**
+   * Resolves a page position to the preview document and page `setPreview()` takes. The position counts across every
+   * preview document, in the same order `initThumbnails()` assigns pages to the theme thumbnails, so a merchant can
+   * count it off the thumbnail strip. Unlike the thumbnails it is not capped by `maxProductThumbnails`, which keeps
+   * a page reachable that has no thumbnail of its own. It also counts the documents a document condition currently
+   * hides, which the thumbnails leave out: that keeps a setting on the same page whatever the form-field values are,
+   * and `ensurePersonalizeButton()` hides the button while that page is hidden.
+   */
+  private static resolvePreviewPagePosition(previews: iSlimState["previews"] | null, index: number): iSlimPreviewPosition | null {
+    if (!previews) {
+      //A template without preview documents has the single page slim-ui renders, so only index 0 exists.
+      return index === 0 ? { previewIndex: 0, pageIndex: 0 } : null;
+    }
+
+    let position = 0;
+
+    for (let previewIndex = 0; previewIndex < previews.length; ++previewIndex) {
+      //Taken as it is, so a document without pages is skipped here exactly as `initThumbnails()` skips it.
+      const pageCount = previews[previewIndex].pageCount;
+
+      if (index < position + pageCount) {
+        return { previewIndex: previewIndex, pageIndex: index - position };
+      }
+
+      position += pageCount;
+    }
+
+    return null;
+  }
+
+  /**
+   * True while slim-ui already shows the page the Personalize button jumps to, which is when the button has
+   * nothing left to do. Needs `getPreview()`: without it the current page cannot be read back, and a button that
+   * stays visible is the better of the two wrong answers, as it still switches to the right page when clicked.
+   */
+  private isOnPersonalizePreviewPage(page: iSlimPreviewPosition): boolean {
+    if (typeof this.slimUi?.getPreview !== "function") {
+      return false;
+    }
+
+    const current = this.slimUi.getPreview();
+
+    return current.previewIndex === page.previewIndex && current.pageIndex === page.pageIndex;
+  }
+
+  /**
+   * `personalizeButton` feature: adds a button directly in front of the slim-ui add to basket button that switches
+   * the preview over to the page the personalization sits on - the inside of a card, the back of a shirt - so the
+   * shopper sees what they are filling in, and with per-preview property clusters gets that page's properties.
+   *
+   * Nothing is rendered when the page cannot be reached: an index pointing past the template's pages, or an editor
+   * build without `setPreview()`. A button that visibly does nothing is worse than no button at all.
+   *
+   * Re-runs on every rendered preview, which is both what keeps the button hidden while its own page is the one
+   * on screen, and what puts it back after a theme rerendered its product form on a variant change. The existing
+   * node is reused, so this does not stack up buttons.
+   */
+  private ensurePersonalizeButton(): void {
+    if (!this.hasSlimUiFeature("personalizeButton")) {
+      return;
+    }
+
+    if (typeof this.slimUi?.setPreview !== "function") {
+      return;
+    }
+
+    const page = this.getPersonalizePreviewPage();
+
+    if (!page) {
+      if (!this.personalizePageWarningLogged) {
+        this.personalizePageWarningLogged = true;
+
+        //Both settings, as a document that exists but has no such page fails on the page alone.
+        const configured = "\"" + this.personalizePage + "\""
+          + (this.personalizeDocumentPage === null ? "" : ", page " + this.personalizeDocumentPage);
+
+        console.warn("Printess Integration: The Personalize button is switched on, but slimUiPersonalizePageIndex (" + configured + ") names neither a page of a preview document nor a page position of this template.");
+      }
+
+      return;
+    }
+
+    const addToBasketButton = this.integrationButton.printessGetAddToBasketButton();
+
+    if (!addToBasketButton || !addToBasketButton.parentElement) {
+      return;
+    }
+
+    let button = addToBasketButton.parentElement.querySelector<HTMLButtonElement>(".printess-personalize-button");
+
+    if (!button) {
+      button = document.createElement("button");
+
+      button.classList.add("printess-personalize-button");
+      button.setAttribute("type", "button");
+
+      (this.settings.slimUi.buttonClasses || "button btn button--primary").split(" ").forEach((className) => {
+        if (className) {
+          button!.classList.add(className);
+        }
+      });
+
+      button.addEventListener("click", (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        this.onPersonalizeClick();
+      });
+
+      addToBasketButton.parentElement.insertBefore(button, addToBasketButton);
+    }
+
+    button.innerText = this.settings.captions?.personalize || "Personalize";
+
+    //Steps out of the way once the shopper is on that page, a click would only repaint the page already shown, and
+    //while its document condition hides that page, as `setPreview()` ignores a hidden preview.
+    PrintessShopifySlimUi.showOrHideElement(button, this.isPersonalizePreviewPageVisible(page) && !this.isOnPersonalizePreviewPage(page));
+  }
+
+  /** False while the document condition of the preview the Personalize button jumps to does not hold. */
+  private isPersonalizePreviewPageVisible(page: iSlimPreviewPosition): boolean {
+    const previews = this.slimUi?.previews;
+
+    //A template without preview documents has the single page slim-ui renders, which is always shown.
+    if (!previews || previews.length === 0) {
+      return true;
+    }
+
+    return PrintessShopifySlimUi.isPreviewVisible(previews[page.previewIndex]);
+  }
+
+  private onPersonalizeClick(): void {
+    const page = this.getPersonalizePreviewPage();
+
+    if (page) {
+      this.applyPreviewPage(page);
+    }
+  }
+
+  /**
    * The page navigation replaces the theme thumbnails, so every product image besides the main one
    * (which stays the slim-ui preview image) and the theme thumbnail strip are hidden. `initThumbnails()`
    * stops rendering them as well, as nobody would see them.
@@ -522,6 +849,15 @@ export class PrintessShopifySlimUi implements IIntegration {
       }
     }
 
+    //Translated storefront: the theme uses the localized option names
+    if (this.product.productOptions && optionPosition < 1 && _name) {
+      const index = this.product.productOptions.findIndex((x) => x.localizedName === _name);
+
+      if (index >= 0) {
+        optionPosition = index + 1;
+      }
+    }
+
     if (this.product.productOptions && optionPosition > 0 && optionPosition <= this.product.productOptions.length) {
       _name = this.product.productOptions[optionPosition - 1].name;
     }
@@ -543,7 +879,8 @@ export class PrintessShopifySlimUi implements IIntegration {
         for (let currentValue = 0; currentValue < option.optionValues.length; ++currentValue) {
           const _value = option.optionValues[currentValue];
 
-          if (_value.name === value || _value.id === parseInt(value)) {
+          //localizedName: translated storefront, the theme uses the localized value names
+          if (_value.name === value || _value.id === parseInt(value) || (_value.localizedName && _value.localizedName === value)) {
             ret = _value.name;
             break;
           }
@@ -748,6 +1085,14 @@ export class PrintessShopifySlimUi implements IIntegration {
   private async getFullVariant(variant: IShortVariant): Promise<IShopifyVariant<number> | null> {
     if (PrintessShopifySlimUi.fullVariantCache[variant.id]) {
       return PrintessShopifySlimUi.fullVariantCache[variant.id];
+    }
+
+    const preloadedVariant = this.preloadedProduct ? this.preloadedProduct.getVariant(variant.id) : null;
+
+    if (preloadedVariant) {
+      PrintessShopifySlimUi.fullVariantCache[variant.id] = preloadedVariant;
+
+      return preloadedVariant;
     } else {
       const graphql = new PrintessShopifyGraphQlApi(this.settings.apiDomain || "", this.settings.shopToken, this.settings.graphQlToken, this.settings.graphQlLanguage);
       const variantOptions: Record<string, string> = {};
@@ -883,7 +1228,8 @@ export class PrintessShopifySlimUi implements IIntegration {
               (el as HTMLSelectElement).options[i].selected = true;
 
               el.setAttribute('value', formFieldValue);
-              (el as HTMLSelectElement).value = initialValue === formFieldValue ? formFieldValue : valueLabel;
+              //The option's own value, it can differ from the form field value (value ids, translated storefronts)
+              (el as HTMLSelectElement).value = (el as HTMLSelectElement).options[i].value;
             } else {
               if (!valueChanged && (el as HTMLSelectElement).options[i].selected === true) {
                 valueChanged = true;
@@ -1022,6 +1368,10 @@ export class PrintessShopifySlimUi implements IIntegration {
   }
 
   private async initThumbnails(currentImageUrl?: string): Promise<{ url: string, imageFrameDimensions: Record<string, iExternalImageFrameDimensions> }[]> {
+    // Runs before the `pageNavigation` exit below, as that feature renders previews as well and the button has to
+    // follow the page shown there too. Reads nothing this method writes, so the position here costs nothing.
+    this.ensurePersonalizeButton();
+
     if (this.hasSlimUiFeature("pageNavigation")) {
       // the thumbnails are hidden and slim-ui renders the page navigation itself, so requesting a
       // preview render per page here would only cost render time nobody gets to see
@@ -1040,38 +1390,33 @@ export class PrintessShopifySlimUi implements IIntegration {
     }
 
     let previews = this.slimUi!.previews;
+    const previewPages: Array<{ previewIndex: number, pageIndex: number }> = [];
 
     if (!previews || previews.length === 0) {
-      previews = [{ pageCount: 1, docName: "", facingPages: false }];
+      previews = [{ pageCount: 1, docName: "", facingPages: false, visible: true }];
     }
 
     if (previews) {
       for (let i = 0; i < previews.length; i++) {
         const preview = previews[i];
+
+        // Its document condition does not hold for the current form-field values. Skipped before rendering it, so
+        // the visible pages fill the slots from the first one on - slot 0 being the main image slim-ui renders to.
+        if (!PrintessShopifySlimUi.isPreviewVisible(preview)) {
+          continue;
+        }
+
         for (let j = 0; j < preview.pageCount && j <= maxProductThumbnails; j++) {//1: Skip first image as this is the default display image that is already displayed
           const thumbnailInfo = await this.slimUi!.getPreviewImageInfo(i, j);
 
           if (this.themeProductNodes.productThumbnails.length > currentThumbnailIndex) {
-            const thumbnailImage = this.themeProductNodes.productThumbnails[currentThumbnailIndex];
+            PrintessShopifySlimUi.setThumbnailSlotImage(this.themeProductNodes.productThumbnails[currentThumbnailIndex], thumbnailInfo.url);
 
-
-            thumbnailImage.src = thumbnailInfo.url;
-
-            if (typeof thumbnailImage.srcset !== "undefined" && thumbnailImage.srcset) {
-              thumbnailImage.srcset = thumbnailInfo.url;
-            }
-
+            previewPages[currentThumbnailIndex] = { previewIndex: i, pageIndex: j };
             ret.push(thumbnailInfo);
 
             if (secondThumbnails != null && secondThumbnails.length > currentThumbnailIndex) {
-              const thumbnailImage = secondThumbnails[currentThumbnailIndex];
-
-
-              thumbnailImage.src = thumbnailInfo.url;
-
-              if (typeof thumbnailImage.srcset !== "undefined" && thumbnailImage.srcset) {
-                thumbnailImage.srcset = thumbnailInfo.url;
-              }
+              PrintessShopifySlimUi.setThumbnailSlotImage(secondThumbnails[currentThumbnailIndex], thumbnailInfo.url);
             }
           }
 
@@ -1080,16 +1425,195 @@ export class PrintessShopifySlimUi implements IIntegration {
       }
     }
 
-    if (currentImageUrl && secondThumbnails != null && secondThumbnails.length > 0) {
-      const thumbnailImage = secondThumbnails[0] as HTMLImageElement;
-      thumbnailImage.src = currentImageUrl;
+    // A slot past the visible pages may still show the render of a page that has been hidden since, so it gets its
+    // merchant photo back. Slot 0 is left alone, it is the image slim-ui renders the current page to.
+    for (let i = Math.max(1, currentThumbnailIndex); i < this.themeProductNodes.productThumbnails.length; ++i) {
+      PrintessShopifySlimUi.restoreThumbnailSlotImage(this.themeProductNodes.productThumbnails[i]);
+    }
 
-      if (typeof thumbnailImage.srcset !== "undefined" && thumbnailImage.srcset) {
-        thumbnailImage.srcset = currentImageUrl;
+    if (secondThumbnails != null) {
+      for (let i = Math.max(1, currentThumbnailIndex); i < secondThumbnails.length; ++i) {
+        PrintessShopifySlimUi.restoreThumbnailSlotImage(secondThumbnails[i]);
       }
     }
 
+    this.previewPagesByThumbnailIndex = previewPages;
+
+    // `currentImageUrl` is the page slim-ui has just rendered, which belongs on the slot showing that page -
+    // thumbnail 0 only while nothing has moved the current page (see `getCurrentPreviewThumbnailIndex()`).
+    // Writing it to 0 unconditionally would paint the current page over page 1 as soon as the shopper has
+    // switched pages at all.
+    const currentThumbnailSlot = this.getCurrentPreviewThumbnailIndex();
+
+    if (currentImageUrl && secondThumbnails != null && secondThumbnails.length > currentThumbnailSlot) {
+      PrintessShopifySlimUi.setThumbnailSlotImage(secondThumbnails[currentThumbnailSlot], currentImageUrl);
+    }
+
+    // Re-run on every refresh: a variant change has the theme replace its own media markup, taking
+    // any listener bound to the old nodes with it. Marked per container, so this does not stack.
+    this.registerThumbnailNavigation();
+
     return ret;
+  }
+
+  /**
+   * False while the document condition of a preview does not hold for the current form-field values. Editor builds
+   * from before document conditions do not send the flag, and every preview of theirs is shown.
+   */
+  private static isPreviewVisible(preview: iSlimState["previews"][number] | null | undefined): boolean {
+    return !!preview && preview.visible !== false;
+  }
+
+  /**
+   * Writes a rendered page onto a theme image, remembering the merchant photo it showed before on the first write,
+   * so `restoreThumbnailSlotImage()` can put it back once no visible page is left for that slot.
+   */
+  private static setThumbnailSlotImage(image: HTMLImageElement, url: string): void {
+    if (typeof image.dataset.printessOriginalSrc === "undefined") {
+      image.dataset.printessOriginalSrc = image.getAttribute("src") || "";
+      image.dataset.printessOriginalSrcset = image.getAttribute("srcset") || "";
+    }
+
+    image.src = url;
+
+    if (typeof image.srcset !== "undefined" && image.srcset) {
+      image.srcset = url;
+    }
+  }
+
+  /** Puts the merchant photo back onto a theme image `setThumbnailSlotImage()` has written to, does nothing otherwise. */
+  private static restoreThumbnailSlotImage(image: HTMLImageElement): void {
+    const originalSrc = image.dataset.printessOriginalSrc;
+
+    if (typeof originalSrc === "undefined" || image.getAttribute("src") === originalSrc) {
+      return;
+    }
+
+    if (image.dataset.printessOriginalSrcset) {
+      image.srcset = image.dataset.printessOriginalSrcset;
+    }
+
+    image.src = originalSrc;
+  }
+
+  /** The thumbnail slot a preview page was rendered onto, or -1 when no thumbnail shows that page. */
+  private findThumbnailIndexOfPreviewPage(page: iSlimPreviewPosition): number {
+    return this.previewPagesByThumbnailIndex.findIndex((x) => {
+      return x && x.previewIndex === page.previewIndex && x.pageIndex === page.pageIndex;
+    });
+  }
+
+  /**
+   * The thumbnail slot the page slim-ui currently shows belongs on. `getPreview()` is the authority, so a page
+   * slim-ui moved to on its own - its own page navigation, or a template that does not open on its first page -
+   * counts as well. It only reaches shops once the editor domain serves a build that has it, so the position this
+   * integration last set itself stays the fallback, exactly as `setPreview()` is feature detected.
+   */
+  private getCurrentPreviewThumbnailIndex(): number {
+    if (typeof this.slimUi?.getPreview === "function") {
+      const index = this.findThumbnailIndexOfPreviewPage(this.slimUi.getPreview());
+
+      if (index >= 0) {
+        return index;
+      }
+    }
+
+    return this.currentPreviewThumbnailIndex;
+  }
+
+  /**
+   * Switches slim-ui over to a preview page and remembers the thumbnail slot it belongs on, so the next render
+   * lands on that slot instead of on the one the shopper was looking at before. `thumbnailIndex` is passed in
+   * where the caller already knows it, which is the thumbnail the shopper clicked.
+   */
+  private applyPreviewPage(page: iSlimPreviewPosition, thumbnailIndex?: number): void {
+    if (typeof this.slimUi?.setPreview !== "function") {
+      return;
+    }
+
+    const index = typeof thumbnailIndex === "number" ? thumbnailIndex : this.findThumbnailIndexOfPreviewPage(page);
+
+    if (index >= 0) {
+      this.currentPreviewThumbnailIndex = index;
+    }
+
+    this.slimUi.setPreview(page.previewIndex, page.pageIndex);
+
+    //`getPreview()` is up to date from here on, so the button state does not have to wait for the render.
+    this.ensurePersonalizeButton();
+  }
+
+  /**
+   * `thumbnailNavigation` feature: lets the theme's own thumbnail strip drive slim-ui's current
+   * preview page, so clicking the thumbnail showing page 2 tells slim-ui the shopper is looking at
+   * page 2 - a template saved with "Properties Per Preview Document" then shows that page's
+   * properties, and every following render lands on that thumbnail instead of on the first one.
+   *
+   * Deliberately opt-in per product: on shops already running slim-ui those thumbnails switch nothing
+   * but the theme's own image, and silently giving them a second effect would change behaviour under
+   * live products. Skipped under `pageNavigation`, which hides this strip and renders its own.
+   */
+  private registerThumbnailNavigation(): void {
+    if (!this.hasSlimUiFeature("thumbnailNavigation") || this.hasSlimUiFeature("pageNavigation")) {
+      return;
+    }
+
+    const selector = this.settings.uiSelectors?.cssProductThumbnailNavigationSelector;
+
+    if (!selector) {
+      return;
+    }
+
+    this.themeProductNodes.productContainer.querySelectorAll<HTMLElement>(selector).forEach((container) => {
+      if (container.dataset.printessThumbnailNavigation === "true") {
+        return;
+      }
+
+      container.dataset.printessThumbnailNavigation = "true";
+      container.addEventListener("click", (event) => this.onThumbnailNavigationClick(container, event));
+    });
+  }
+
+  /**
+   * Resolves the clicked thumbnail to its position among the container's thumbnail images, which is
+   * the same "by position" mapping `initThumbnails()` uses to assign preview pages to thumbnails.
+   * Themes wrap each thumbnail in a button/link/list item, so the click is matched against every
+   * thumbnail's nearest clickable ancestor rather than against the <img> itself.
+   *
+   * `setPreview()` is feature-detected: it is absent from older editor builds, and a thumbnail click
+   * doing nothing extra is a far better outcome than a TypeError inside a theme's click handler.
+   */
+  private onThumbnailNavigationClick(container: HTMLElement, event: Event): void {
+    if (typeof this.slimUi?.setPreview !== "function") {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+
+    if (!target) {
+      return;
+    }
+
+    const thumbnails = Array.from(container.querySelectorAll<HTMLImageElement>("img"));
+    const index = thumbnails.findIndex((thumbnail) => {
+      const clickable = thumbnail.closest("li, button, a, [role=button]") ?? thumbnail;
+
+      return clickable.contains(target);
+    });
+
+    if (index < 0) {
+      return;
+    }
+
+    const page = this.previewPagesByThumbnailIndex[index];
+
+    if (!page) {
+      // A product photo the merchant added themselves, with no preview page rendered onto it -
+      // slim-ui stays on the page it is on rather than repainting it onto that photo's slot.
+      return;
+    }
+
+    this.applyPreviewPage(page, index);
   }
 
   private static async waitForResult<T>(result: T | Promise<T>): Promise<T> {
@@ -1185,11 +1709,12 @@ export class PrintessShopifySlimUi implements IIntegration {
   private static async create(settings: IShopifySettings, integrationButton: IIntegrationButton, pluginContainer: IPluginContainer): Promise<PrintessShopifySlimUi> {
     const ret = new PrintessShopifySlimUi(settings, integrationButton, integrationButton.product!, pluginContainer);
     const graphQl = new PrintessShopifyGraphQlApi(settings.apiDomain || "", settings.shopToken, settings.graphQlToken, settings.graphQlLanguage || "");
+    ret.preloadedProduct = PrintessPreloadedProduct.fromSettings(settings, integrationButton.product!.id);
 
     //Show image progress indicator
     PrintessShopifySlimUi.showOrHideElement(ret.themeProductNodes.imageProgressIndicator, true);
 
-    ret.productVariants = await graphQl.getProductVariants(integrationButton.product!.id);
+    ret.productVariants = ret.preloadedProduct ? ret.preloadedProduct.getShortVariants() : await graphQl.getProductVariants(integrationButton.product!.id);
     ret.usedVariantOptions = ret.getUsedProductOptions();
 
     const currentProductOptions = ret.getSelectedProductOptions();
@@ -1241,6 +1766,8 @@ export class PrintessShopifySlimUi implements IIntegration {
     }
 
     ret.slimUiFeatures = PrintessShopifySlimUi.parseSlimUiFeatures(productSettings);
+    ret.personalizePage = PrintessShopifySlimUi.parsePersonalizePage(productSettings);
+    ret.personalizeDocumentPage = PrintessShopifySlimUi.parsePersonalizeDocumentPage(productSettings);
 
     if (ret.hasSlimUiFeature("pageNavigation")) {
       ret.hideThemeProductThumbnails();
@@ -1301,13 +1828,16 @@ export class PrintessShopifySlimUi implements IIntegration {
                 const productThumbnails = rootNode.querySelectorAll<HTMLImageElement>(selector);
 
                 if (productThumbnails && productThumbnails.length > 0 && thumbnails.length > 0) {
-                  for (let i = 0; i < productThumbnails.length && i < thumbnails.length; ++i) {
-                    if (typeof productThumbnails[i].src !== "undefined") {
-                      productThumbnails[i].src = thumbnails[i].url;
+                  for (let i = 0; i < productThumbnails.length; ++i) {
+                    if (typeof productThumbnails[i].src === "undefined") {
+                      continue;
                     }
 
-                    if (typeof productThumbnails[i].srcset !== "undefined" && productThumbnails[i].srcset) {
-                      productThumbnails[i].srcset = thumbnails[i].url;
+                    if (i < thumbnails.length) {
+                      PrintessShopifySlimUi.setThumbnailSlotImage(productThumbnails[i], thumbnails[i].url);
+                    } else {
+                      //Showed a page that is hidden by its document condition now
+                      PrintessShopifySlimUi.restoreThumbnailSlotImage(productThumbnails[i]);
                     }
                   }
                 }
@@ -1342,8 +1872,25 @@ export class PrintessShopifySlimUi implements IIntegration {
       }
     };
 
-    if (productSettings && productSettings.slimUiMerge1) {
-      (createParams as any).merge1 = productSettings.slimUiMerge1;
+    // Never merged onto a save token: in cartedit/reorder mode `templateName` IS the item's save
+    // token, i.e. a finished design the customer already personalized, and a merge replaces exactly
+    // the layout-origin properties they filled in with the merge template's defaults - silently
+    // discarding their work. Only a real template name gets merged into.
+    let mergeTemplate = "";
+    if (productSettings && productSettings.slimUiMerge1 && !templateName.startsWith("st:")) {
+      mergeTemplate = productSettings.slimUiMerge1;
+
+      if (mergeTemplate === "mergeTemplate" && ret.product && ret.product.mergeTemplates) {
+        if (Array.isArray(ret.product.mergeTemplates) && ret.product.mergeTemplates.length > 0 && ret.product.mergeTemplates[0].value) {
+          mergeTemplate = ret.product.mergeTemplates[0].value;
+        } else if (ret.product.mergeTemplates.value) {
+          mergeTemplate = ret.product.mergeTemplates.value;
+        }
+      } else if (mergeTemplate === "shopifyHandle") {
+        mergeTemplate = ret.product.handle;
+      }
+
+      (createParams as any).merge1 = mergeTemplate;
     }
 
     //Todo:Neeads to be removed later
@@ -1360,6 +1907,12 @@ export class PrintessShopifySlimUi implements IIntegration {
       } catch (e) {
         console.error("Printess Integration: Unable to deserialize product settings: " + JSON.stringify(e));
       }
+    }
+
+    const layoutSnippetSearchTags = PrintessShopifySlimUi.parseLayoutSnippetSearchTags(productSettings);
+
+    if (layoutSnippetSearchTags) {
+      createParams.layoutSnippetSearchTags = layoutSnippetSearchTags;
     }
 
     //Short time compatibility layer
@@ -1410,6 +1963,9 @@ export class PrintessShopifySlimUi implements IIntegration {
 
     ret.integrationButton.printessSetStatus("slimui");
 
+    //Needs the live slim ui, the button is only shown for a page the template really has.
+    ret.ensurePersonalizeButton();
+
     if (ret.urlParams && ret.urlParams.saveToken && ret.urlParams.basketKey) {
       ret.mode = "cartedit";
 
@@ -1434,7 +1990,7 @@ export class PrintessShopifySlimUi implements IIntegration {
   }
 
   private static async getBasketItemForSaveToken(saveToken: string): Promise<any> {
-    const result = await fetch('/cart.js', {
+    const result = await fetch(PrintessSharedTools.getShopifyRouteUrl("cart.js"), {
       headers: {
         'Content-Type': 'application/json',
       }
@@ -1582,7 +2138,14 @@ export class PrintessShopifySlimUi implements IIntegration {
         return ret.mergeTemplates ? ret.mergeTemplates.value || "" : "";
       },
       getSettings(): IPrintessProductSettings {
-        return ret.printessSettings && ret.printessSettings.value ? <IPrintessProductSettings>JSON.parse(ret.printessSettings.value) : {};
+        const settings: IPrintessProductSettings = ret.printessSettings && ret.printessSettings.value ? <IPrintessProductSettings>JSON.parse(ret.printessSettings.value) || {} : {};
+
+        //Fall back to the printess.productType meta field in case the settings do not contain a product type
+        if (!settings.productType && ret.productType?.value) {
+          settings.productType = ret.productType.value;
+        }
+
+        return settings;
       },
       getDropshipProductDefinitionId(): number {
         if (ret.productDefinitionId && typeof ret.productDefinitionId.value !== "undefined") {
@@ -1810,12 +2373,12 @@ export class PrintessShopifySlimUi implements IIntegration {
 
                     if (jsonString.indexOf("_printessSaveToken") >= 0) {
                       setTimeout(function () {
-                        window.location.replace("/cart");
+                        window.location.replace(PrintessSharedTools.getShopifyCartUrl());
                       }, 0);
                     }
                   } else if (init.body.toString().indexOf("_printessSaveToken") >= 0) {
                     setTimeout(function () {
-                      window.location.replace("/cart");
+                      window.location.replace(PrintessSharedTools.getShopifyCartUrl());
                     });
                   }
                 }
@@ -1855,7 +2418,7 @@ export class PrintessShopifySlimUi implements IIntegration {
   }
 
   private async addNewItemToBasket(saveToken: string, valuesToWrite: Record<string, any>, retries: number = 0): Promise<void> {
-    const result = await fetch('/cart/add', {
+    const result = await fetch(PrintessSharedTools.getShopifyRouteUrl("cart/add"), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1897,7 +2460,7 @@ export class PrintessShopifySlimUi implements IIntegration {
   }
 
   private static async deleteBasketItemByKey(key: string, retries = 0): Promise<void> {
-    const result = await fetch('/cart/change.js', {
+    const result = await fetch(PrintessSharedTools.getShopifyRouteUrl("cart/change.js"), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1965,12 +2528,12 @@ export class PrintessShopifySlimUi implements IIntegration {
 
     let basketItemProperties = { ...originalBasketItem.properties ? originalBasketItem.properties : {} } as Record<string, string>;
 
-    let printessSettings: Record<string, any> = basketItemProperties["printessSettings"] ? PrintessShopifySlimUi.parseJsonHtmlDecode<Record<string, any>>(basketItemProperties["_printessSettings"]) || {} : {};
+    let printessSettings: Record<string, any> = basketItemProperties["_printessSettings"] ? PrintessShopifySlimUi.parseJsonHtmlDecode<Record<string, any>>(basketItemProperties["_printessSettings"]) || {} : {};
 
     printessSettings = {
       ...printessSettings,
-      printTemplateName: variant?.printTemplateName?.value ? variant.printTemplateName.value : (this.product.printTemplateName ? this.product.printTemplateName : ""),
-      productDefinitionId: this.product.productDefinitionId?.value ? this.product.productDefinitionId?.value : "",
+      printTemplateName: variant?.printTemplateName?.value ? variant.printTemplateName.value : (this.product.printTemplateName?.value ? this.product.printTemplateName?.value : ""),
+      productDefinitionId: this.getProductDefinitionIdForBasketItem(),
       printessProductType: this.product.productType?.value ? this.product.productType.value : "",
       saveTokenToDelete: this.urlParams.saveToken || undefined,
     }
@@ -2022,7 +2585,7 @@ export class PrintessShopifySlimUi implements IIntegration {
         }
       }
 
-      window.location.replace('/cart');
+      window.location.replace(PrintessSharedTools.getShopifyCartUrl());
     }
   }
 

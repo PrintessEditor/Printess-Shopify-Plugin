@@ -1,3 +1,32 @@
+/**
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2026 Printess GmbH & Co. Kg
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Printess GmbH & Co. Kg does not provide any support for this plugin.
+ */
+
+// Master copy: panelUi/build.sh copies this file unchanged into the cart transform function
+// (currentApp/printess/extensions/printess-additional-options/src), so edit it in panelUi only.
+
 export interface IPrintessNameAndValue {
   name: string
   value: string
@@ -19,12 +48,19 @@ export interface IPrintessFormFieldPrice {
   pricePerPage?: IPrintessVariantPrice
 }
 
+export interface IPrintessQuantityTier {
+  minQuantity: number//The tier applies from this cart line quantity on, the matching tier with the highest minQuantity wins
+  pricePerUnit?: number | null//Replaces the unit price of the product itself; empty keeps the variant price
+  pricePerPage?: number | null//Replaces pricePerPage.pricePerUnit (the variant stays the same); empty keeps the configured page price
+}
+
 export interface IPrintessPriceConfig {
   displayName?: string | null
   includedPageCount?: number | null
   disableQuantity?: boolean | null
   pricePerPage?: IPrintessVariantPrice
   formFieldPrices?: IPrintessFormFieldPrice[]
+  quantityTiers?: IPrintessQuantityTier[] | null
 }
 
 export interface ICalculatedAdditionalPrices {
@@ -33,7 +69,8 @@ export interface ICalculatedAdditionalPrices {
     quantity: number
     pricePerUnit: number
   }[]
-  totalPrice: number
+  totalPrice: number//Sum of the additional prices only, the unit price of the product itself is not part of it
+  unitPrice: number | null//Replacement unit price of the product from the matching quantity tier, null keeps the variant price
 }
 
 export class PrintessPriceCalculator {
@@ -83,12 +120,40 @@ export class PrintessPriceCalculator {
     return matchedValues.length === condition.length;
   }
 
-  public static calculatePrice(numberOfPages: number, formFieldValues: IPrintessFormfieldAndValue[], config: IPrintessPriceConfig | string): ICalculatedAdditionalPrices {
+  private static isPrice(value: any): value is number {
+    return typeof value === "number" && isFinite(value) && value >= 0;
+  }
+
+  /**
+   * The quantity tier for the given cart line quantity: the tier with the highest minQuantity that is not above the quantity.
+   */
+  public static getQuantityTier(config: IPrintessPriceConfig | null | undefined, quantity: number): IPrintessQuantityTier | null {
+    if (!config || !Array.isArray(config.quantityTiers) || config.quantityTiers.length === 0) {
+      return null;
+    }
+
+    let ret: IPrintessQuantityTier | null = null;
+
+    for (const x of config.quantityTiers) {
+      if (!x || typeof x.minQuantity !== "number" || !isFinite(x.minQuantity) || x.minQuantity > quantity) {
+        continue;
+      }
+
+      if (ret === null || x.minQuantity > ret.minQuantity) {
+        ret = x;
+      }
+    }
+
+    return ret;
+  }
+
+  public static calculatePrice(numberOfPages: number, formFieldValues: IPrintessFormfieldAndValue[], config: IPrintessPriceConfig | string, quantity: number = 1): ICalculatedAdditionalPrices {
     const that = this;
 
     const ret: ICalculatedAdditionalPrices = {
       totalPrice: 0.0,
-      variants: []
+      variants: [],
+      unitPrice: null
     };
 
     if (config && typeof config === "string") {
@@ -101,10 +166,18 @@ export class PrintessPriceCalculator {
 
     config = <IPrintessPriceConfig>config;//Make compiler happy
 
+    const quantityTier = this.getQuantityTier(config, quantity);
+
+    if (quantityTier && this.isPrice(quantityTier.pricePerUnit)) {
+      ret.unitPrice = quantityTier.pricePerUnit;
+    }
+
+    const pricePerPage: number = quantityTier && this.isPrice(quantityTier.pricePerPage) ? quantityTier.pricePerPage : (config.pricePerPage?.pricePerUnit || 0);
+
     //Calculate price per page values
     if (numberOfPages > 0) {
-      if (this.hasValue(config.pricePerPage) && this.hasValue(config.pricePerPage?.variantId) && config.pricePerPage?.variantId && this.hasValue(config.pricePerPage?.pricePerUnit) && typeof config.pricePerPage?.pricePerUnit === "number" && config.pricePerPage?.pricePerUnit > 0) {
-        let pricePerUnit: number = config.pricePerPage?.pricePerUnit || 0;
+      if (this.hasValue(config.pricePerPage) && this.hasValue(config.pricePerPage?.variantId) && config.pricePerPage?.variantId && typeof pricePerPage === "number" && pricePerPage > 0) {
+        let pricePerUnit: number = pricePerPage;
         let quantity: number = numberOfPages;
 
         if (config.disableQuantity === true) {

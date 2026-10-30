@@ -1,12 +1,38 @@
+/**
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2026 Printess GmbH & Co. Kg
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Printess GmbH & Co. Kg does not provide any support for this plugin.
+ */
+
 import { PrintessEditor, PrintessEditorFrontend } from "./printessEditor.js";
 import { ICreateSaveTokenParams, PrintessSharedTools } from "./printess-shared-tools.js";
 import { IProduct as IShopifyProduct, IShortVariant, IVariant as IShopifyVariant, IVariant, IPrintessShopifyGraphQlApi } from "./printess-graphql-api.d";
 import { PrintessShopifyGraphQlApi } from "./printess-graphql-api.js";
-import { IIntegrationButton, ISessionSettings, IShopifySettings, IUrlParams, ICartItem, IIntegration, IImageDimensionFormFields, TImageFormat, IPluginContainer } from "./printess-shopify.d";
+import { IIntegrationButton, ISessionSettings, IShopifySettings, IUrlParams, ICartItem, IIntegration, IImageDimensionFormFields, TImageFormat, IPluginContainer, PrintessDesignButtonStatus } from "./printess-shopify.d";
 import { iExternalBookSettings, iExternalImage, iMergeTemplate, iPrintessApi, iPrintessComponent, IProduct } from "./printess-editor.d";
 import { IShopData } from "./printess-editor.d";
 import { IPrintessPriceConfig, PrintessPriceCalculator } from "./printess-price-calculator.js";
-import { INameValuePair, IPluginContext, IPlugin, TUiType, IEditorSettings, IFormFieldMapping, IPrintessProduct, IPrintessProductSettings, IPrintessProductVariant, IPrintessVariantSettings } from "./printess-plugins.d"
+import { INameValuePair, IPluginContext, IPlugin, TUiType, IEditorSettings, IFormFieldMapping, IPrintessProduct, IPrintessProductSettings, IPrintessProductVariant, IPrintessVariantSettings, TVariantPersonalizationOption } from "./printess-plugins.d"
 import { PrintessPluginHost } from "./printess-plugin-host.js";
 
 type IntegrationMode = "ProductPage" | "Cart";
@@ -52,6 +78,9 @@ export class PrintessShopify implements IIntegration {
   private static shortVariantCache: Record<number, IShortVariant[]> = {};
   private static variantCache: Record<number, IVariant<number>> = {};
 
+  private static readonly customerLoginStateKey = "_printessCustomerIsLoggedIn";
+  private static customerLoginStateSynced = false;
+
   public getComponent(): iPrintessComponent | null {
     return this.editor?.getComponent() || null;
   }
@@ -90,11 +119,96 @@ export class PrintessShopify implements IIntegration {
     this.product = product;
     this.pluginContainer = pluginContainer;
 
+    PrintessShopify.syncCustomerLoginState(this.configuration);
+
     PrintessEditorFrontend.preloadEditor(config.editorDomain || "", config.editorVersion || "");
   }
 
   public getIntegrationButton(): IIntegrationButton | null {
     return this.designNowButton;
+  }
+
+  public async loadSaveToken(saveToken: string): Promise<boolean> {
+    if (!this.editor) {
+      console.error("Printess Integration: Printess Editor is not initialized yet");
+    }
+
+    return await this.editor.loadSaveToken(saveToken);
+  }
+
+  /**
+   * Not every shop uses our hosted PrintessIntegrationLauncher, some ship an older copy of it inside their
+   * theme. Those older launchers do not provide the whole button api, so every call into it has to be
+   * feature detected and must never be the only way to get to the product form / add to basket button.
+   */
+  private static callButtonApi<T>(button: IIntegrationButton | null, methodName: "printessGetAddToBasketForm" | "printessGetAddToBasketButton"): T | null {
+    if (!button || typeof (<any>button)[methodName] !== "function") {
+      return null;
+    }
+
+    try {
+      return ((<any>button)[methodName]() as T) || null;
+    } catch (e) {
+      console.warn("Printess Integration: " + methodName + " of the integration button failed.", e);
+
+      return null;
+    }
+  }
+
+  /**
+   * Returns the product form that is currently inside the dom.
+   *
+   * The legacy lookup (the form our design now button sits in) stays the primary source of truth, so shops
+   * running an older PrintessIntegrationLauncher from their theme behave exactly like before. Only if that
+   * lookup does not yield a form which is part of the document - which is what happens on themes rerendering
+   * the product form on variant switch, for example "Prestige" - we ask the launcher for the current form.
+   * A recent launcher heals itself in that call and moves our button back into the dom, so never cache the result.
+   */
+  private getProductForm(): HTMLFormElement | null {
+    if (!this.designNowButton) {
+      return null;
+    }
+
+    const ownForm = this.designNowButton.form || this.designNowButton.closest("form");
+
+    if (ownForm && document.body.contains(ownForm)) {
+      return ownForm;
+    }
+
+    const currentForm = PrintessShopify.callButtonApi<HTMLFormElement>(this.designNowButton, "printessGetAddToBasketForm");
+
+    if (currentForm && document.body.contains(currentForm)) {
+      return currentForm;
+    }
+
+    return ownForm || currentForm;
+  }
+
+  /**
+   * Returns the add to basket button of the theme that is currently inside the dom.
+   *
+   * Same order as getProductForm(): searching inside the product form is the legacy behaviour and stays first,
+   * the launcher is only asked when the form does not contain a usable button.
+   */
+  private getAddToBasketButton(form?: HTMLFormElement | null): HTMLButtonElement | null {
+    const selector = this.configuration.uiSelectors?.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart,.add-to-cart-button,#AddToCart';
+    const productForm = form || this.getProductForm();
+
+    if (productForm) {
+      const buttonInForm = productForm.querySelector(selector) as HTMLButtonElement | null;
+
+      if (buttonInForm) {
+        return buttonInForm;
+      }
+    }
+
+    const currentButton = PrintessShopify.callButtonApi<HTMLElement>(this.designNowButton, "printessGetAddToBasketButton");
+
+    if (currentButton && document.body.contains(currentButton)) {
+      return currentButton as HTMLButtonElement;
+    }
+
+    return null;
   }
 
   private static applyThemeSettings(config: IShopifySettings): IShopifySettings {
@@ -257,6 +371,57 @@ export class PrintessShopify implements IIntegration {
         await this.updateFormFieldValue(key, value);
       }
     }
+
+    //Only shops that show the theme's price in the editor need the theme quantity, writing it may make themes / apps re-render.
+    //Last, as the properties above may switch the variant and themes re-render their quantity input on that
+    const context = this.getPluginContextDummy();
+    const editorSettings = this.getPluginHost().getEditorSettings(context, this.getEditorSettings(context));
+
+    if (editorSettings.priceDisplayElementSelector) {
+      this.setThemeQuantity(this.urlParams?.quantity || cartItem?.quantity || 0);
+    }
+  }
+
+  /**
+   * Writes the quantity of the edited cart line into the theme's quantity input, so the theme and price apps show the
+   * price for that quantity, which is what the priceDisplayElementSelector editor setting reads. Only used for shops
+   * having that setting, as the events may make themes / apps re-render. The events let the theme notice the change,
+   * setting the value alone is ignored by most of them.
+   */
+  private setThemeQuantity(quantity: number): void {
+    try {
+      const input = this.getThemeQuantityInput();
+
+      if (!input || isNaN(quantity) || !isFinite(quantity) || quantity <= 0 || input.value === quantity.toString()) {
+        return;
+      }
+
+      input.value = quantity.toString();
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (e) {
+      console.error(e);//An unexpected theme quantity selector must not prevent editing the cart item
+    }
+  }
+
+  /**
+   * The quantity selector inside the product form, or, as a lot of themes place it outside of the form, the one linked
+   * to it with form="...".
+   */
+  private getThemeQuantityInput(): HTMLInputElement | HTMLSelectElement | null {
+    const form = this.getProductForm();
+
+    if (!form) {
+      return null;
+    }
+
+    let ret = form.querySelector<HTMLInputElement | HTMLSelectElement>('[name="quantity"]');
+
+    if (!ret && form.id) {
+      ret = document.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="quantity"][form="${CSS.escape(form.id)}"]`);
+    }
+
+    return ret;
   }
 
   private listenOnVariantChanges() {
@@ -275,18 +440,44 @@ export class PrintessShopify implements IIntegration {
     // against the last value that produced a real notification.
     let lastFiredVariantId: number | null = extractVariantId();
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    //Status the button had before a pending variant switch put it into loading, null while no switch is pending
+    let statusBeforeSwitch: PrintessDesignButtonStatus | null = null;
 
     const handleUrlChange = () => {
       if (debounceTimer !== null) {
         clearTimeout(debounceTimer);
       }
 
-      debounceTimer = setTimeout(() => {
+      //Until the new variant is evaluated the theme's add to basket button must not be clickable, otherwise a personalizable
+      //variant can be added without personalization while the variant lookup is still running on a slow connection
+      const pendingVariantId = extractVariantId();
+
+      if (statusBeforeSwitch === null && pendingVariantId !== null && pendingVariantId !== lastFiredVariantId && that.designNowButton && typeof that.designNowButton.printessGetStatus === "function" && (!that.editor || !that.editor.editorIsOpen())) {
+        statusBeforeSwitch = that.designNowButton.printessGetStatus();
+        that.designNowButton.printessSetStatus("loading");
+      }
+
+      debounceTimer = setTimeout(async () => {
         debounceTimer = null;
         const variantId = extractVariantId();
-        if (variantId !== null && variantId !== lastFiredVariantId) {
-          lastFiredVariantId = variantId;
-          that.onVariantChanged(variantId);
+        const previousStatus = statusBeforeSwitch;
+
+        try {
+          if (variantId !== null && variantId !== lastFiredVariantId) {
+            lastFiredVariantId = variantId;
+            await that.onVariantChanged(variantId);
+          }
+        } catch (e) {
+          console.error(e);
+        } finally {
+          //onVariantChanged did not decide (e.g. variant not found, switched back to the same variant), keep the old state
+          if (previousStatus !== null) {
+            statusBeforeSwitch = null;
+
+            if (that.designNowButton && that.designNowButton.printessGetStatus() === "loading") {
+              that.designNowButton.printessSetStatus(previousStatus);
+            }
+          }
         }
       }, 50);
     };
@@ -322,16 +513,14 @@ export class PrintessShopify implements IIntegration {
         const personalizationMode = await pluginHost.getVariantPersonalizationTypeAsync(this.getPluginContextDummy(product, printessVariant), printessVariant, variantSettings?.personalizationMode || productSettings?.personalizationMode || "personalize");
 
         if (await this.evaluateDesignNowButtonDisplayState(variantId) === "hide") {
+          //The theme's add to basket button takes over, it must not send the values of a previous personalization along
+          this.clearProductFormFromPrintessValues();
           this.designNowButton!.printessSetStatus("hidden");
         } else {
           this.designNowButton!.printessSetStatus(personalizationMode === "directAdd" ? "direct_add_to_basket" : "editor");
         }
 
-        if (personalizationMode === "both") {
-          this.addDirectAddToBasketButton();
-        } else {
-          this.removeDirectAddToBasketButton();
-        }
+        await this.updateDirectAddToBasketButtonAsync(product, printessVariant, personalizationMode);
       }
     }
   }
@@ -437,11 +626,7 @@ export class PrintessShopify implements IIntegration {
 
       designNowButton.printessSetStatus(personalizationMode === "directAdd" ? "direct_add_to_basket" : "editor");
 
-      if (personalizationMode === "both") {
-        ret.addDirectAddToBasketButton();
-      } else {
-        ret.removeDirectAddToBasketButton();
-      }
+      await ret.updateDirectAddToBasketButtonAsync(product, variant, personalizationMode);
     }
 
     designNowButton.addEventListener("click", async () => {
@@ -479,7 +664,7 @@ export class PrintessShopify implements IIntegration {
   }
 
   private static async getBasketItemForBasketKey(saveToken: string): Promise<ICartItem | null> {
-    const result = await fetch('/cart.js', {
+    const result = await fetch(PrintessSharedTools.getShopifyRouteUrl("cart.js"), {
       headers: {
         'Content-Type': 'application/json',
       }
@@ -771,7 +956,39 @@ export class PrintessShopify implements IIntegration {
     return null;
   }
 
+  /**
+   * Shopify always delivers a variant. Products without real options get an implicit default one, titled "Default Title" in english and translated in other shop languages.
+   * Such a title carries no product information and must never be displayed.
+   */
+  private isDefaultVariant(variant: IShopifyVariant<number>): boolean {
+    //Liquid knows it for sure, the storefront graphQl api does not expose the flag
+    if (typeof this.configuration.hasOnlyDefaultVariant === "boolean") {
+      return this.configuration.hasOnlyDefaultVariant;
+    }
+
+    const product = this.configuration.product;
+
+    if (product && typeof (<{ has_only_default_variant?: boolean }><unknown>product).has_only_default_variant === "boolean") {
+      return (<{ has_only_default_variant?: boolean }><unknown>product).has_only_default_variant === true;
+    }
+
+    const options = variant.optionLookup || [];
+
+    if (options.length === 0) {
+      return true;
+    }
+
+    //A single option on a single variant product is either shopifys implicit "Title" option or a real option carrying just one value, only the naming tells them apart
+    if (options.length === 1 && (!product || !product.variants || product.variants.length <= 1)) {
+      return (options[0].name || "").trim().toLowerCase() === "title" || (options[0].value || "").trim().toLowerCase() === "default title";
+    }
+
+    return false;
+  }
+
   private convertShopifyVariantToPrintessVariant(variant: IShopifyVariant<number>): IPrintessProductVariant {
+    const that = this;
+
     const result: IMixedProductVariant = {
       ...variant,
       getId(): string {
@@ -779,6 +996,9 @@ export class PrintessShopify implements IIntegration {
       },
       getLabel(): string {
         return result.title;
+      },
+      isDefaultVariant(): boolean {
+        return that.isDefaultVariant(result);
       },
       getPrice(): number {
         if (typeof result.price === "number") {
@@ -885,6 +1105,15 @@ export class PrintessShopify implements IIntegration {
       }
     }
 
+    //Translated storefront: the theme uses the localized option names
+    if (product.productOptions && optionPosition < 1 && _name) {
+      const index = product.productOptions.findIndex((x) => x.localizedName === _name);
+
+      if (index >= 0) {
+        optionPosition = index + 1;
+      }
+    }
+
     if (product.productOptions && optionPosition > 0 && optionPosition <= product.productOptions.length) {
       _name = product.productOptions[optionPosition - 1].name;
     }
@@ -947,7 +1176,8 @@ export class PrintessShopify implements IIntegration {
           for (let currentValue = 0; currentValue < option.optionValues.length; ++currentValue) {
             const _value = option.optionValues[currentValue];
 
-            if (_value.name === value || _value.id === parseInt(value)) {
+            //localizedName: translated storefront, the theme uses the localized value names
+            if (_value.name === value || _value.id === parseInt(value) || (_value.localizedName && _value.localizedName === value)) {
               ret = _value.name;
               break;
             }
@@ -980,7 +1210,7 @@ export class PrintessShopify implements IIntegration {
   private getProductOptionValuesFromProductPage(): Record<string, string> {
     let ret = {} as Record<string, string>;
 
-    const productForm = this.designNowButton?.form || this.designNowButton?.closest("form");
+    const productForm = this.getProductForm();
     const inputContainer = (this.configuration.uiSelectors?.cssProductContainerSelector) ? (this.designNowButton?.closest(this.configuration.uiSelectors?.cssProductContainerSelector)) : null;
 
     PrintessShopify.getInputs((inputContainer as HTMLElement | null) || productForm || null).forEach((input: HTMLSelectElement | HTMLInputElement) => {
@@ -1049,10 +1279,11 @@ export class PrintessShopify implements IIntegration {
 
   private clearProductFormFromPrintessValues() {
     if (this.designNowButton) {
-      const form = this.designNowButton.form || this.designNowButton.closest("form");
+      const form = this.getProductForm();
 
       if (form) {
-        form.querySelectorAll('input[name="_printessSaveToken"],input[name="_printessThumbnail"],input[name="_printessSettings"],input[data-printess-created="true"]').forEach((input) => {
+        //The inputs are named properties[...], matching the bare property names never removed the save token and the thumbnail
+        form.querySelectorAll('input[name="properties[_printessSaveToken]"],input[name="properties[_printessThumbnail]"],input[name="properties[_printessSettings]"],input[data-printess-created="true"]').forEach((input) => {
           input.remove();
         });
 
@@ -1063,7 +1294,7 @@ export class PrintessShopify implements IIntegration {
 
   private setProductFormPrintessValues(saveToken: string, thumbnailUrl: string, additionalProperties: Record<string, string>) {
     if (this.designNowButton) {
-      const form = this.designNowButton.form || this.designNowButton.closest("form");
+      const form = this.getProductForm();
 
       if (form) {
         let saveTokenEdit: HTMLInputElement | null = form.querySelector('input[name="properties\\[_printessSaveToken\\]"]');
@@ -1071,6 +1302,7 @@ export class PrintessShopify implements IIntegration {
         if (!saveTokenEdit) {
           saveTokenEdit = document.createElement("input");
           saveTokenEdit.setAttribute("type", "hidden");
+          saveTokenEdit.setAttribute("data-printess-created", "true");
           saveTokenEdit.setAttribute("name", "properties[_printessSaveToken]");
 
           form.appendChild(saveTokenEdit);
@@ -1083,6 +1315,7 @@ export class PrintessShopify implements IIntegration {
         if (!thumbnailUrlEdit) {
           thumbnailUrlEdit = document.createElement("input");
           thumbnailUrlEdit.setAttribute("type", "hidden");
+          thumbnailUrlEdit.setAttribute("data-printess-created", "true");
           thumbnailUrlEdit.setAttribute("name", "properties[_printessThumbnail]");
 
           form.appendChild(thumbnailUrlEdit);
@@ -1156,7 +1389,7 @@ export class PrintessShopify implements IIntegration {
   }
 
   private static async getCartItems(): Promise<ICartItem[] | null> {
-    const downloadedCartItems = await fetch('/cart.js', {
+    const downloadedCartItems = await fetch(PrintessSharedTools.getShopifyRouteUrl("cart.js"), {
       headers: {
         'Content-Type': 'application/json',
       }
@@ -1180,7 +1413,7 @@ export class PrintessShopify implements IIntegration {
     });
 
     if (curr) {
-      const deleted = await fetch('/cart/change.js', {
+      const deleted = await fetch(PrintessSharedTools.getShopifyRouteUrl("cart/change.js"), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1218,7 +1451,7 @@ export class PrintessShopify implements IIntegration {
         properties: newProperties
       };
 
-      const response: Response = await fetch('/cart/add', {
+      const response: Response = await fetch(PrintessSharedTools.getShopifyRouteUrl("cart/add"), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1235,7 +1468,7 @@ export class PrintessShopify implements IIntegration {
 
       await PrintessShopify.deleteBasketItemByKey(cartItem.key, cartItems);
 
-      window.location.replace('/cart');
+      window.location.replace(PrintessSharedTools.getShopifyCartUrl());
     }
   }
 
@@ -1511,6 +1744,101 @@ export class PrintessShopify implements IIntegration {
     });
   }
 
+  /**
+   * Reads a value written by writeStorageValue().
+   *
+   * Shopify requires us to keep working when the local storage is not available - private modes deny access to it -
+   * so the session storage is used as fallback, exactly like the login data handling does.
+   */
+  private static readStorageValue(key: string): string | null {
+    try {
+      const value = localStorage.getItem(key);
+
+      if (value !== null) {
+        return value;
+      }
+    } catch (e) {
+    }
+
+    try {
+      return sessionStorage.getItem(key);
+    } catch (e) {
+    }
+
+    return null;
+  }
+
+  private static writeStorageValue(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value);
+
+      return;
+    } catch (e) {
+    }
+
+    try {
+      sessionStorage.setItem(key, value);
+    } catch (e) {
+    }
+  }
+
+  /**
+   * Remembers whether the shopify customer was logged in on the last page load, so a change can be detected.
+   *
+   * Shopify never tells us that a customer logged in or out, while the basket id we generate stays in the browsers
+   * storage until it is removed explicitly. On shared devices - kiosk systems for example - the next customer
+   * therefore inherits the basket of his predecessor and, with auto import enabled, is offered the images that
+   * customer uploaded. Whenever the shop reports "not logged in" although the last page load was done by a logged
+   * in customer, the stored basket id is dropped and the next design starts with an empty image list.
+   *
+   * The same happens on the way in: a customer who logs in on a browser that was used by an anonymous visitor
+   * before starts his own basket session, so nothing that visitor uploaded can surface in his design. Together
+   * with autoImportRequiresLogin, which keeps the import from running for anonymous visitors in the first place,
+   * every imported image then belongs to the customer who is looking at it. A shop that turned that setting off
+   * wants anonymous uploads to survive the login, so this half is skipped there.
+   *
+   * Three states are stored, not two: a missing entry is a browser we never saw and must not cost anybody his
+   * basket, while "false" is a visit we watched somebody spend logged out.
+   *
+   * The user id never has to be cleared here, it is always handed to us by the theme (customerId) and is gone with
+   * the logout anyway.
+   *
+   * Only done while auto import is enabled: without it nothing leaks and shops keep their basket id across a
+   * logout exactly like before.
+   *
+   * The login data (_printessLoginData) is deliberately left alone here, although a leftover entry reopens the
+   * design of the customer who wrote it. It is the only copy of a design that was started without being logged in,
+   * so dropping it would cost a customer who decides against the login his work on his way to the basket. That
+   * weighs heavier than the entry surviving a logout it was, in all but one flow, written before anyway.
+   */
+  private static syncCustomerLoginState(config: IShopifySettings): void {
+    if (PrintessShopify.customerLoginStateSynced || config.autoImportUserImages !== true) {
+      return;
+    }
+
+    PrintessShopify.customerLoginStateSynced = true;
+
+    //Older themes do not provide customerIsLoggedIn, there the presence of the customer id is the only indicator
+    const isLoggedIn: boolean = config.customerIsLoggedIn === true || !!config.customerId;
+    const storedState: string | null = PrintessShopify.readStorageValue(PrintessShopify.customerLoginStateKey);
+    const wasLoggedIn: boolean = storedState === "true";
+    const wasLoggedOut: boolean = storedState === "false";
+
+    if (isLoggedIn === wasLoggedIn && storedState !== null) {
+      return;
+    }
+
+    PrintessShopify.writeStorageValue(PrintessShopify.customerLoginStateKey, isLoggedIn ? "true" : "false");
+
+    if (isLoggedIn) {
+      if (wasLoggedOut && config.autoImportRequiresLogin !== false) {
+        PrintessEditor.clearBasketId();
+      }
+    } else if (wasLoggedIn) {
+      PrintessEditor.clearBasketId();
+    }
+  }
+
   private static readLoginData(loginDataUrlFallback: string = ""): ILoginData[] {
     let ret: ILoginData[] = [];
 
@@ -1697,11 +2025,14 @@ export class PrintessShopify implements IIntegration {
         return -1;
       },
       getSettings(): IPrintessProductSettings {
-        if (result.printessSettings?.value) {
-          return <IPrintessProductSettings>JSON.parse(result.printessSettings?.value) || {};
+        const settings: IPrintessProductSettings = result.printessSettings?.value ? <IPrintessProductSettings>JSON.parse(result.printessSettings.value) || {} : {};
+
+        //Fall back to the printess.productType meta field in case the settings do not contain a product type
+        if (!settings.productType && result.productType?.value) {
+          settings.productType = result.productType.value;
         }
 
-        return {};
+        return settings;
       },
       getTemplateName(): string {
         return result.templateName?.value || "";
@@ -1784,7 +2115,7 @@ export class PrintessShopify implements IIntegration {
       this.setProductFormPrintessValues(params.saveToken, params.thumbnailUrl, params.propertyValuesToWrite);
 
       if (this.designNowButton) {
-        const form = this.designNowButton.form || this.designNowButton.closest("form");
+        const form = this.getProductForm();
 
         if (form) {
           //write current variant id
@@ -1794,7 +2125,7 @@ export class PrintessShopify implements IIntegration {
             variantInput.value = params.variant.getId();
           }
 
-          const addToBasketButton = form.querySelector(this.configuration.uiSelectors?.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart,.add-to-cart-button,#AddToCart') as HTMLButtonElement | null;
+          const addToBasketButton = this.getAddToBasketButton(form);
 
           if (this.priceConfig) {
             PrintessSharedTools.onHookFetch((url: string, init: RequestInit | null, response: Response): "cancel" | "continue" => {
@@ -1838,12 +2169,12 @@ export class PrintessShopify implements IIntegration {
 
                     if (jsonString.indexOf("_printessSaveToken") >= 0) {
                       setTimeout(function () {
-                        window.location.replace("/cart");
+                        window.location.replace(PrintessSharedTools.getShopifyCartUrl());
                       }, 0);
                     }
                   } else if (init.body.toString().indexOf("_printessSaveToken") >= 0) {
                     setTimeout(function () {
-                      window.location.replace("/cart");
+                      window.location.replace(PrintessSharedTools.getShopifyCartUrl());
                     });
                   }
                 }
@@ -1922,7 +2253,7 @@ export class PrintessShopify implements IIntegration {
 
       await PrintessShopify.replaceBasketItem(this.cartItem, params.variant, params.propertyValuesToWrite, this.urlParams?.quantity || this.cartItem.quantity);
 
-      window.location.replace("/cart");
+      window.location.replace(PrintessSharedTools.getShopifyCartUrl());
     }
 
     return Promise.resolve();
@@ -1949,14 +2280,18 @@ export class PrintessShopify implements IIntegration {
       transformedFormFields[x.name] = x.value;
     });
 
-    const formFieldsAsProperties = PrintessPluginHost.parseFormFieldsAsProperties(await pluginHost.getFormFieldsAsPropertiesAsync(pluginContext));
+    //The product settings extend the entries the plugins provided, they never replace them.
+    const formFieldsAsProperties = PrintessPluginHost.mergeFormFieldsAsProperties(await pluginHost.getFormFieldsAsPropertiesAsync(pluginContext), product.getSettings()?.formFieldsAsProperties);
     const transformedFormFieldsAsProperties: Record<string, string> = {};
 
-    formFields.forEach((x) => {
-      let entry = formFieldsAsProperties.find((y) => { y.formfieldName === x.name });
+    //The configuration order is the order the properties show up in at the cart item, so never sort them here.
+    formFieldsAsProperties.forEach((x) => {
+      const formField = formFields.find((y) => { return y.name === x.formfieldName });
 
-      if (entry) {
-        transformedFormFieldsAsProperties[entry.propertyName || entry.formfieldName] = x.value;
+      if (formField) {
+        transformedFormFieldsAsProperties[x.propertyName || x.formfieldName] = formField.value;
+      } else if (x.defaultValue) {
+        transformedFormFieldsAsProperties[x.propertyName || x.formfieldName] = x.defaultValue;
       }
     });
 
@@ -1964,7 +2299,8 @@ export class PrintessShopify implements IIntegration {
       ...transformedFormFieldsAsProperties || {},
       _printessSettings: JSON.stringify({
         withoutPersonalization: true,
-        printTemplateName: variant.getPrintTemplateName() ? variant?.getPrintTemplateName() : (product.getPrintTemplateName() ? product.getPrintTemplateName() : "")
+        printTemplateName: variant.getPrintTemplateName() ? variant?.getPrintTemplateName() : (product.getPrintTemplateName() ? product.getPrintTemplateName() : ""),
+        printessProductType: product.getSettings()?.productType || ""
       })
     };
 
@@ -2011,7 +2347,7 @@ export class PrintessShopify implements IIntegration {
     this.setProductFormPrintessValues(saveTokenResult.saveToken, saveTokenResult.thumbnailUrl, propertyValuesToWrite);
 
     if (this.designNowButton) {
-      const form = this.designNowButton.form || this.designNowButton.closest("form");
+      const form = this.getProductForm();
 
       if (form) {
         //write current variant id
@@ -2021,7 +2357,7 @@ export class PrintessShopify implements IIntegration {
           variantInput.value = variant.getId();
         }
 
-        const addToBasketButton = form.querySelector(this.configuration.uiSelectors?.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart,.add-to-cart-button,#AddToCart') as HTMLButtonElement | null;
+        const addToBasketButton = this.getAddToBasketButton(form);
 
         if (addToBasketButton && typeof addToBasketButton.click === "function") {
           addToBasketButton.click();
@@ -2120,7 +2456,7 @@ export class PrintessShopify implements IIntegration {
       return Promise.resolve();
     }
 
-    const form = this.designNowButton.form || this.designNowButton.closest("form");
+    const form = this.getProductForm();
 
     if (!form) {
       return Promise.resolve();
@@ -2214,7 +2550,8 @@ export class PrintessShopify implements IIntegration {
               (el as HTMLSelectElement).options[i].selected = true;
 
               el.setAttribute('value', params.formFieldValue);
-              (el as HTMLSelectElement).value = initialValue === params.formFieldValue ? params.formFieldValue : params.formFieldValueLabel;
+              //The option's own value, it can differ from the form field value (value ids, translated storefronts)
+              (el as HTMLSelectElement).value = (el as HTMLSelectElement).options[i].value;
             } else {
               if (!valueChanged && (el as HTMLSelectElement).options[i].selected === true) {
                 valueChanged = true;
@@ -2332,7 +2669,7 @@ export class PrintessShopify implements IIntegration {
     return this.removeVariantOptions(ret);
   }
 
-  public getPriceInCentAsync(context: IPluginContext, currentPrice: number, params: {
+  public async getPriceInCentAsync(context: IPluginContext, currentPrice: number, params: {
     currentFormFieldValues?: { name: string, value: string }[],
     numberOfPages?: number,
     minPages?: number | null,
@@ -2353,12 +2690,43 @@ export class PrintessShopify implements IIntegration {
         additionalPages = params.numberOfPages - minPages;
       }
 
-      const calculatedPrice = PrintessPriceCalculator.calculatePrice(additionalPages, params.currentFormFieldValues || [], this.priceConfig || "");
+      // Only configurations with quantity tiers look at the quantity, everything else is priced exactly as before
+      const quantity = Array.isArray(this.priceConfig.quantityTiers) && this.priceConfig.quantityTiers.length > 0 ? this.getCartQuantity() : 1;
+      const calculatedPrice = PrintessPriceCalculator.calculatePrice(additionalPages, params.currentFormFieldValues || [], this.priceConfig || "", quantity);
+
+      if (calculatedPrice.unitPrice !== null) {
+        // The quantity tier replaces the unit price of the variant, exactly like the cart transform does with the bundle copy
+        const variant = context.variant || await this.getCurrentVariantAsync(context);
+
+        ret = ret - Math.round(variant.getPrice() * 100) + Math.round(calculatedPrice.unitPrice * 100);
+      }
 
       ret = ret + (calculatedPrice.totalPrice * 100) // * 100 => price in cent;
     }
 
-    return Promise.resolve(ret);
+    return ret;
+  }
+
+  /**
+   * The quantity the item goes into the cart with, which picks the quantity tier of the price config. That is the
+   * quantity of the cart line when a cart item is edited, otherwise the quantity input of the product form.
+   */
+  private getCartQuantity(): number {
+    let ret = 0;
+
+    try {
+      if (this.cartItem) {
+        ret = this.urlParams?.quantity || this.cartItem.quantity || 0;
+      } else {
+        const input = this.getThemeQuantityInput();
+
+        ret = input ? parseInt(input.value) : 0;
+      }
+    } catch (e) {
+      console.error(e);//A theme with an unexpected product form must not break the price display, it falls back to one piece
+    }
+
+    return !isNaN(ret) && isFinite(ret) && ret > 0 ? ret : 1;
   }
 
   public async renderPriceAsync(context: IPluginContext, priceToRender: number, currentValue: string, params: {
@@ -2460,7 +2828,9 @@ export class PrintessShopify implements IIntegration {
       shopDomain: this.configuration.internalShopDomain,
       translationKey: this.configuration.translationKey || "auto",
       hidePriceInEditor: typeof this.configuration.hidePricesInEditor === "boolean" ? this.configuration.hidePricesInEditor : false,
-      usePageCountInsteadOfPrintedRecordCount: this.configuration.usePageCountInsteadOfPrintedRecordCount === true
+      savedDesignProductName: this.configuration.savedDesignProductName || "productName",
+      autoImportUserImages: this.configuration.autoImportUserImages === true,
+      autoImportRequiresLogin: this.configuration.autoImportRequiresLogin !== false
     };
 
     return ret;
@@ -2521,8 +2891,8 @@ export class PrintessShopify implements IIntegration {
   **/
 
   private addDirectAddToBasketButton(): IIntegrationButton | null {
-    const form = this.designNowButton?.form || this.designNowButton?.closest("form");
-    const addToBasketButton = form?.querySelector(this.configuration.uiSelectors?.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart,.add-to-cart-button,#AddToCart') as HTMLButtonElement | null;
+    const form = this.getProductForm();
+    const addToBasketButton = this.getAddToBasketButton(form);
 
     if (!this.designNowButton || !form || !addToBasketButton) {
       return null;
@@ -2541,6 +2911,13 @@ export class PrintessShopify implements IIntegration {
 
     if (button) {
       return button;
+    }
+
+    //Older PrintessIntegrationLauncher versions shipped inside a theme do not know this factory
+    if (typeof PrintessIntegrationLauncher === "undefined" || typeof PrintessIntegrationLauncher.createDirectAddToBasketButton !== "function") {
+      console.warn("Printess Integration: The PrintessIntegrationLauncher of this shop does not support createDirectAddToBasketButton, the direct add to basket button is not displayed.");
+
+      return null;
     }
 
     button = PrintessIntegrationLauncher.createDirectAddToBasketButton(this.configuration.captions?.addToBasket || "Add to basket", this.configuration.captions?.saveBasketItem || "Saving...", this.configuration.designButtonClasses);
@@ -2566,9 +2943,23 @@ export class PrintessShopify implements IIntegration {
     return button;
   }
 
+  /**
+   * Shows the additional direct add to basket button next to the design now button for personalization mode "both".
+   * Plugins can overrule that decision for the current variant via hasDirectAddToBasketButtonAsync.
+   */
+  private async updateDirectAddToBasketButtonAsync(product: IPrintessProduct, variant: IPrintessProductVariant, personalizationMode: TVariantPersonalizationOption): Promise<void> {
+    const hasButton = await this.getPluginHost().hasDirectAddToBasketButtonAsync(this.getPluginContextDummy(product, variant), personalizationMode === "both");
+
+    if (hasButton) {
+      this.addDirectAddToBasketButton();
+    } else {
+      this.removeDirectAddToBasketButton();
+    }
+  }
+
   private removeDirectAddToBasketButton(): void {
-    const form = this.designNowButton?.form || this.designNowButton?.closest("form");
-    const addToBasketButton = form?.querySelector(this.configuration.uiSelectors?.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart,.add-to-cart-button,#AddToCart') as HTMLButtonElement | null;
+    const form = this.getProductForm();
+    const addToBasketButton = this.getAddToBasketButton(form);
 
     if (!this.designNowButton || !form || !addToBasketButton) {
       return;

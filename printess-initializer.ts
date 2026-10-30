@@ -1,11 +1,46 @@
+/**
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2026 Printess GmbH & Co. Kg
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Printess GmbH & Co. Kg does not provide any support for this plugin.
+ */
+
 import { IPrintessShopifyGraphQlApi, IProduct, IProductOption } from "./printess-graphql-api.d";
 import { IIntegration, IIntegrationButton, IPluginContainer, IShopifySettings, PrintessDesignButtonStatus } from "./printess-shopify.d";
 import { IPlugin } from "./printess-plugins.d";
 
+type TIntegration = "editor" | "slimui" | "none";
+
+/**
+ * Stays exported although the theme app extension loads the built file as a plain script, where a top level
+ * export is a syntax error: dropping it here does not help, as the type imports above keep this file a module
+ * and tsc then emits an `export {};` marker at the end instead. build.sh strips the export on the way into the
+ * app's assets - see the copy step there.
+ */
 export class PrintessIntegrationLauncher {
   private static callbacks: ((editorButtons: IIntegrationButton[], slimUiButtons: IIntegrationButton[]) => void)[] | null = [];
   private static editorButtons: IIntegrationButton[] | null = null;
   private static slimUiButtons: IIntegrationButton[] | null = null;
+  private static cachedProducts: Record<string, IProduct> = {};
   public static plugins: IPlugin[] = [];
 
   public static executeAfterLoading(callback: (editorButtons: IIntegrationButton[], slimUiButtons: IIntegrationButton[]) => void) {
@@ -16,8 +51,235 @@ export class PrintessIntegrationLauncher {
     }
   }
 
+  private static hasValue(obj: any): boolean {
+    return typeof obj !== "undefined" && obj !== null;
+  }
+
+  private static readonly defaultAddToBasketButtonSelector = 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart,.add-to-cart-button,#AddToCart';
+
+  /**
+   * The header block of the theme app extension hides the theme's add to basket buttons with this style until the
+   * launcher ran, otherwise a slow page lets the buyer add a personalizable product before our button exists.
+   */
+  private static readonly addToBasketPreHideStyleId = "printess-add-to-basket-prehide";
+
+  public static removeAddToBasketPreHide(): void {
+    //Every placement of the configuration block renders its own prehide style with the same id, all of them have to go
+    document.querySelectorAll("#" + PrintessIntegrationLauncher.addToBasketPreHideStyleId).forEach((x) => x.remove());
+  }
+
+  private static getAddToBasketButtonSelector(settings?: IShopifySettings | null): string {
+    return settings?.uiSelectors?.cssAddToBasketButtonSelector || PrintessIntegrationLauncher.defaultAddToBasketButtonSelector;
+  }
+
+  private static isAttachedToDom(node: Node | null | undefined): boolean {
+    return !!node && document.body.contains(node);
+  }
+
+  private static getFormOfElement(element: HTMLElement | null): HTMLFormElement | null {
+    if (!element) {
+      return null;
+    }
+
+    let form: HTMLFormElement | null = null;
+
+    if (element instanceof HTMLButtonElement || element instanceof HTMLInputElement) {
+      form = element.form;
+    }
+
+    if (!form) {
+      form = element.closest("form");
+    }
+
+    return form;
+  }
+
+  private static getProductIdForElement(element: HTMLElement | null): string | null {
+    const form = PrintessIntegrationLauncher.getFormOfElement(element);
+
+    if (!form) {
+      return null;
+    }
+
+    const productInput: HTMLInputElement | HTMLSelectElement | null = form.querySelector('input[name="product-id"],select[name="product-id"]') as HTMLInputElement | HTMLSelectElement | null;
+
+    if (productInput) {
+      return productInput.value;
+    }
+
+    let parent: HTMLElement | null = form.parentElement;
+
+    for (let i = 0; i < 10 && parent; i++) {
+      const productId = parent.getAttribute("data-product-id");
+
+      if (productId) {
+        return productId;
+      }
+
+      parent = parent.parentElement;
+    }
+
+    return null;
+  }
+
+  /**
+   * Returns all add to basket buttons of the theme, ignoring the buttons printess added itself.
+   */
+  private static getThemeAddToBasketButtons(selector: string): HTMLElement[] {
+    const ret: HTMLElement[] = [];
+
+    document.querySelectorAll(selector).forEach((candidate) => {
+      if (candidate instanceof HTMLElement && !candidate.matches(".printess-integration-button") && !candidate.matches(".printess-direct-to-basket-button")) {
+        ret.push(candidate);
+      }
+    });
+
+    return ret;
+  }
+
+  /**
+   * Some themes (for example "Prestige") rerender large parts of the product page when the variant is switched.
+   * This removes the add to basket button (and our design now button) we keep in memory from the dom.
+   * This method locates the add to basket button that replaced the one we lost.
+   */
+  private static findCurrentAddToBasketButton(button: IIntegrationButton, selector: string): HTMLElement | null {
+    const candidates = PrintessIntegrationLauncher.getThemeAddToBasketButtons(selector);
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    if (candidates.length === 1) {
+      return candidates[0];
+    }
+
+    const productId = button.product ? (button.product.id || "").toString() : "";
+
+    if (productId) {
+      const match = candidates.find((candidate) => PrintessIntegrationLauncher.getProductIdForElement(candidate) === productId);
+
+      if (match) {
+        return match;
+      }
+    }
+
+    //Do not guess if the page contains several products
+    return null;
+  }
+
+  private static async initializeIntegrationButton(settings: IShopifySettings, button: IIntegrationButton, graphQlApi?: IPrintessShopifyGraphQlApi | null, addedButtons?: IIntegrationButton[] | null, index?: number | null): Promise<TIntegration> {
+
+    const productId = button.printessGetProductId();
+
+    if (!productId) {
+      button.printessRemoveButton();
+
+      if (this.hasValue(addedButtons) && this.hasValue(index)) {
+        addedButtons!.splice(index!, 1);
+      }
+
+      console.warn("Printess Integration: Removed button as product form does not contain product id");
+
+      return "none";
+    }
+
+    if (!PrintessIntegrationLauncher.cachedProducts[productId]) {
+      let metaFields: string[] = ["templateName", "printTemplateName", "optionNameMapping", "productType", "productDefinitionId", "mergeTemplates", "settings", "dpi", "outputFormat", "tableQuantityFormField", "ignoreDropshipBundling", "dropshipBundlingId", "variantSwitchingOption", "theme", "additionalPrices"];
+
+      if (settings.additionalProductMetaFields && settings.additionalProductMetaFields.length > 0) {
+        metaFields = [...metaFields, ...settings.additionalProductMetaFields];
+      }
+
+      let product = PrintessIntegrationLauncher.getPreloadedProduct(parseInt(productId), settings);
+
+      //Liquid renders the options in the language of the storefront, the form field mappings use the api's language
+      if (product && settings.productPreloadIsPrimaryLocale === false) {
+        if (!graphQlApi) {
+          graphQlApi = (createPrintessShopifyApi || (await PrintessIntegrationLauncher.importIntoGlobalNamespace(settings.integrationUrl + "printess-graphql-api.js"))["createPrintessShopifyApi"])(settings.apiDomain || "", settings.shopToken, settings.graphQlToken, settings.graphQlLanguage || "");
+        }
+
+        let apiOptions: IProductOption<number>[] = [];
+
+        try {
+          apiOptions = await graphQlApi?.getProductOptions(parseInt(productId)) || [];
+        } catch (ex) {
+          console.error("Printess Integration: " + ex);
+        }
+
+        if (apiOptions.length > 0) {
+          PrintessIntegrationLauncher.renamePreloadedOptions(settings, apiOptions);
+        } else {
+          console.warn("Printess Integration: Unable to load the product options in the shop's language, form field mappings may not match on this translated storefront.");
+        }
+      }
+
+      if (!product) {
+        if (!graphQlApi) {
+          graphQlApi = (createPrintessShopifyApi || (await PrintessIntegrationLauncher.importIntoGlobalNamespace(settings.integrationUrl + "printess-graphql-api.js"))["createPrintessShopifyApi"])(settings.apiDomain || "", settings.shopToken, settings.graphQlToken, settings.graphQlLanguage || "");
+        }
+
+        product = await graphQlApi?.getProductById(parseInt(productId), true, metaFields) || null;
+      }
+
+      if (!product) {
+        button.printessRemoveButton();
+
+        if (this.hasValue(addedButtons) && this.hasValue(index)) {
+          addedButtons!.splice(index!, 1);
+        }
+
+        console.warn("Printess Integration: Removed button. Unable to download product information for product with id " + productId);
+        return "none";
+      }
+
+      PrintessIntegrationLauncher.cachedProducts[productId] = product;
+    }
+
+    const product = PrintessIntegrationLauncher.cachedProducts[productId];
+
+    if (!product.templateName && typeof (<any>window)["getPrintessTemplateName"] === "function") {
+      try {
+        product.templateName = (<any>window)["getPrintessTemplateName"](product);
+      } catch (ex) {
+        console.error("Printess integration: " + ex);
+      }
+    }
+
+    if (!product.templateName && !(<any>window)["loadPrintesForAllProducts"]) {
+      button.printessRemoveButton();
+
+      if (this.hasValue(addedButtons) && this.hasValue(index)) {
+        addedButtons!.splice(index!, 1);
+      }
+
+      console.info(`Printess Integration: Removed integration button as product with id ${productId} is no printess product`);
+
+      return "none";
+    }
+
+    button.product = product;
+
+    if (product.tags && Array.isArray(product.tags)) {
+      const urlParams = new URLSearchParams(window.location.search);
+
+      if (urlParams.get("ui") !== "editor" && product.tags.includes("printess-slimui")) {
+        PrintessIntegrationLauncher.slimUiButtons?.push(button);
+
+        return "slimui";
+      } else {
+        PrintessIntegrationLauncher.editorButtons?.push(button);
+      }
+    } else {
+      PrintessIntegrationLauncher.editorButtons?.push(button);
+    }
+
+    return "editor";
+  }
+
   public static async initialize(settings: IShopifySettings): Promise<void> {
-    settings.integrationUrl = settings.integrationUrl || "https://editor.printess.com/shopify-panelui/";
+    if (settings.integrationUrl !== "https://editor.printess.com/shopify-panelui/" && settings.integrationUrl !== "https://editor.printess.com/shopify-panelui-dev/") {
+      settings.integrationUrl = "https://editor.printess.com/shopify-panelui/";
+    }
 
     PrintessIntegrationLauncher.preconfigureTheme(settings);
 
@@ -31,9 +293,11 @@ export class PrintessIntegrationLauncher {
 
     let addToBasketButtonCount = 0;
     const addedButtons: IIntegrationButton[] = [];
+    let graphQlApi: IPrintessShopifyGraphQlApi | null = null;
+    const addToBasketButtonSelector = PrintessIntegrationLauncher.getAddToBasketButtonSelector(settings);
 
     //Create integration button, hide add to basket button and display loading status
-    document.querySelectorAll(settings?.uiSelectors?.cssAddToBasketButtonSelector || 'button[type="submit"][name="add"], button.product-form__add-button[data-action="add-to-cart"],button#AddToCart,.add-to-cart-button,#AddToCart').forEach((addToBasketButton: Element) => {
+    document.querySelectorAll(addToBasketButtonSelector).forEach((addToBasketButton: Element) => {
       if (!addToBasketButton || (!(addToBasketButton instanceof HTMLElement) && !(addToBasketButton instanceof HTMLButtonElement))) {
         return;
       }
@@ -46,28 +310,17 @@ export class PrintessIntegrationLauncher {
 
       addToBasketButton.setAttribute("data-printess-attached", "true");
 
-      const designNowButton = PrintessIntegrationLauncher.createDesignNowButton(addToBasketButton, settings.captions?.loadingButtonText || "Loading ...", settings.captions?.designNow || "Design now", settings.captions?.addToBasket || "Add to basket", settings.designButtonClasses);
+      const designNowButton = PrintessIntegrationLauncher.createDesignNowButton(addToBasketButton, addToBasketButtonSelector, settings.captions?.loadingButtonText || "Loading ...", settings.captions?.designNow || "Design now", settings.captions?.addToBasket || "Add to basket", settings.designButtonClasses);
 
-      //if (!settings.slimUi?.hasFullEditor) {
       addToBasketButton.after(designNowButton);
-      // } else {
-      //   const wrapperDiv = document.createElement("div");
-      //   wrapperDiv.classList.add("printess-integration-button-wrapper");
-      //   wrapperDiv.appendChild(designNowButton);
-
-      //   const fullButton = PrintessIntegrationLauncher.createFullEditorButton(designNowButton, settings.captions?.advancedButtonText, settings.advancedButtonClasses, settings.integrationUrl);
-      //   wrapperDiv.appendChild(fullButton);
-
-
-      //   addToBasketButton.after(wrapperDiv);
-      // }
 
       addedButtons.push(designNowButton);
     });
 
-    //Download graphqlapi and check all buttons if they should use the printess integration
-    let graphQlApi: IPrintessShopifyGraphQlApi | null = null;
+    //From here on the design now buttons hide the theme buttons of printess products themselves
+    PrintessIntegrationLauncher.removeAddToBasketPreHide();
 
+    //Download graphqlapi and check all buttons if they should use the printess integration
     if (!(<any>window)["PrintessShopifyGraphQlApi"] && !((<any>window)["createPrintessShopifyApi"])) {
       const exports = await PrintessIntegrationLauncher.importIntoGlobalNamespace(settings.integrationUrl + "printess-graphql-api.js");
 
@@ -83,71 +336,12 @@ export class PrintessIntegrationLauncher {
       graphQlApi = (createPrintessShopifyApi || exports["createPrintessShopifyApi"])(settings.apiDomain || "", settings.shopToken, settings.graphQlToken, settings.graphQlLanguage || "");
     }
 
-    const products: Record<string, IProduct> = {};
     const buttonsArray = [...addedButtons];
 
     for (let index = 0; index < buttonsArray.length; ++index) {
       const button = buttonsArray[index];
 
-      const productId = button.printessGetProductId();
-
-      if (!productId) {
-        button.printessRemoveButton();
-        addedButtons.splice(index, 1);
-
-        console.warn("Printess Integration: Removed button as product form does not contain product id");
-
-        continue;
-      }
-
-      if (!products[productId]) {
-        let metaFields: string[] = ["templateName", "printTemplateName", "optionNameMapping", "productType", "productDefinitionId", "mergeTemplates", "settings", "dpi", "outputFormat", "tableQuantityFormField", "ignoreDropshipBundling", "dropshipBundlingId", "variantSwitchingOption", "theme", "additionalPrices"];
-
-        if (settings.additionalProductMetaFields && settings.additionalProductMetaFields.length > 0) {
-          metaFields = [...metaFields, ...settings.additionalProductMetaFields];
-        }
-
-        let product = PrintessIntegrationLauncher.getPreloadedProduct(parseInt(productId), settings);
-
-        if (!product) {
-          product = await graphQlApi?.getProductById(parseInt(productId), true, metaFields) || null;
-        }
-
-        if (!product) {
-          button.printessRemoveButton();
-          addedButtons.splice(index, 1);
-
-          console.warn("Printess Integration: Removed button. Unable to download product information for product with id " + productId);
-          continue;
-        }
-
-        products[productId] = product;
-      }
-
-      const product = products[productId];
-
-      if (!product.templateName) {
-        button.printessRemoveButton();
-        addedButtons.splice(index, 1);
-
-        console.info(`Printess Integration: Removed integration button as product with id ${productId} is no printess product`);
-
-        continue;
-      }
-
-      button.product = product;
-
-      if (product.tags && Array.isArray(product.tags)) {
-        const urlParams = new URLSearchParams(window.location.search);
-
-        if (urlParams.get("ui") !== "editor" && product.tags.includes("printess-slimui")) {
-          PrintessIntegrationLauncher.slimUiButtons.push(button);
-        } else {
-          PrintessIntegrationLauncher.editorButtons.push(button);
-        }
-      } else {
-        PrintessIntegrationLauncher.editorButtons.push(button);
-      }
+      await PrintessIntegrationLauncher.initializeIntegrationButton(settings, button, graphQlApi, addedButtons, index);
     }
 
     const pluginProvider: IPluginContainer = {
@@ -238,6 +432,8 @@ export class PrintessIntegrationLauncher {
     });
 
     PrintessIntegrationLauncher.callbacks = null;
+
+    PrintessIntegrationLauncher.registerAddToBasketButtonListener(settings, pluginProvider, graphQlApi);
   }
 
   private static preconfigureTheme(settings: IShopifySettings) {
@@ -337,7 +533,9 @@ export class PrintessIntegrationLauncher {
           button.classList.remove("show-progress");
           label.innerText = addToBasketText || "Add to basket";
           button.removeAttribute("disabled");
-          button.style.display = "block";
+          //Block level as before, but a flex box: the spinner is centered by the align-items of the button's own
+          //style rule, and a plain "block" here would leave it sitting in the top left corner of the button.
+          button.style.display = "flex";
 
           break;
         }
@@ -356,10 +554,15 @@ export class PrintessIntegrationLauncher {
     return button;
   }
 
-  private static createDesignNowButton(basketButton: HTMLElement, loadingText?: string, designNowText?: string, addToBasketText?: string, additionalClasses?: string): IIntegrationButton {
+  private static createDesignNowButton(initialBasketButton: HTMLElement, addToBasketButtonSelector: string, loadingText?: string, designNowText?: string, addToBasketText?: string, additionalClasses?: string): IIntegrationButton {
     const button = document.createElement("button") as IIntegrationButton;
     button.classList.add("printess-integration-button");
     button.setAttribute("type", "button");
+
+    //The theme can rerender the product form at any time (variant switching), so the add to basket
+    //button we were created for is not necessarily the one currently living in the dom.
+    let basketButton: HTMLElement = initialBasketButton;
+    let buttonWasRemoved = false;
 
     loadingText = loadingText || "Loading ...";
     designNowText = designNowText || "Design now";
@@ -403,7 +606,9 @@ export class PrintessIntegrationLauncher {
           button.style.display = "none";
 
           if (basketButton) {
-            basketButton.style.display = basketButton.getAttribute("data-printess-display") || "block";
+            //Empty, not "block": the attribute is only written when the button had an inline display, so without it
+            //the theme's own style rules are what has to come back - "block" would break a flex button of its own.
+            basketButton.style.display = basketButton.getAttribute("data-printess-display") || "";
           }
 
           if (button.parentElement && button.parentElement.matches(".printess-integration-button-wrapper")) {
@@ -432,7 +637,9 @@ export class PrintessIntegrationLauncher {
           button.classList.remove("show-progress");
           label.innerText = status == "editor" ? (designNowText || "Design now") : (addToBasketText || "Add to basket");
           button.removeAttribute("disabled");
-          button.style.display = "block";
+          //Block level as before, but a flex box: the spinner is centered by the align-items of the button's own
+          //style rule, and a plain "block" here would leave it sitting in the top left corner of the button.
+          button.style.display = "flex";
 
           if (basketButton) {
             if (basketButton.style.display && basketButton.style.display !== "none") {
@@ -453,38 +660,94 @@ export class PrintessIntegrationLauncher {
       return (button.getAttribute("data-printess-status") as PrintessDesignButtonStatus | null) || "hidden";
     };
 
+    /**
+     * Binds this button to the given add to basket button and makes sure that our button
+     * (respectively its wrapper) sits right next to it inside the dom.
+     */
+    const attachToBasketButton = (newBasketButton: HTMLElement | null): void => {
+      if (buttonWasRemoved) {
+        return;
+      }
+
+      if (newBasketButton) {
+        basketButton = newBasketButton;
+      }
+
+      if (!basketButton) {
+        return;
+      }
+
+      basketButton.setAttribute("data-printess-attached", "true");
+
+      //If the button lives inside a wrapper (direct add to basket / full editor button) the complete wrapper has to be moved
+      const nodeToMove: HTMLElement = (button.closest(".printess-integration-button-wrapper") as HTMLElement | null) || button;
+
+      if (!PrintessIntegrationLauncher.isAttachedToDom(nodeToMove) || nodeToMove.previousElementSibling !== basketButton) {
+        basketButton.after(nodeToMove);
+      }
+
+      //Reapply the current state so the theme button gets hidden again
+      button.printessSetStatus(button.printessGetStatus());
+    };
+
+    /**
+     * Returns the add to basket button that is currently inside the dom. If the theme rerendered the
+     * product form, the button we kept in memory got detached. In that case the replacement is looked
+     * up and our design now button is moved back next to it.
+     */
+    const resolveAddToBasketButton = (): HTMLElement => {
+      if (buttonWasRemoved) {
+        return basketButton;
+      }
+
+      if (PrintessIntegrationLauncher.isAttachedToDom(basketButton) && PrintessIntegrationLauncher.isAttachedToDom(button)) {
+        return basketButton;
+      }
+
+      const replacement = PrintessIntegrationLauncher.isAttachedToDom(basketButton) ? basketButton : PrintessIntegrationLauncher.findCurrentAddToBasketButton(button, addToBasketButtonSelector);
+
+      if (replacement) {
+        attachToBasketButton(replacement);
+      }
+
+      return basketButton;
+    };
+
+    button.printessSetAddToBasketButton = (newBasketButton: HTMLElement): void => {
+      attachToBasketButton(newBasketButton);
+    };
+
+    button.printessIsAttached = (): boolean => {
+      return !buttonWasRemoved && PrintessIntegrationLauncher.isAttachedToDom(button) && PrintessIntegrationLauncher.isAttachedToDom(basketButton);
+    };
+
     button.printessGetAddToBasketForm = (): HTMLFormElement | null => {
-      let form = null;
+      const currentBasketButton = resolveAddToBasketButton();
 
-      if (basketButton instanceof HTMLButtonElement) {
-        form = basketButton.form;
-      }
+      const candidates = [
+        PrintessIntegrationLauncher.getFormOfElement(currentBasketButton),
+        //Our own button might still sit inside the product form
+        PrintessIntegrationLauncher.getFormOfElement(button)
+      ];
 
-      if (!form) {
-        form = basketButton.closest("form");
-      }
+      //Prefer a form which is really part of the document, a form of a rerendered page section is useless
+      const attachedForm = candidates.find((x) => PrintessIntegrationLauncher.isAttachedToDom(x));
 
-      return form;
+      return attachedForm || candidates.find((x) => !!x) || null;
     };
 
     button.printessGetProductId = (): string | null => {
-      const form = button.printessGetAddToBasketForm();
-
-      if (!form) {
-        return null;
-      }
-
-      const productInput: HTMLInputElement | HTMLSelectElement | null = form.querySelector('input[name="product-id"],select[name="product-id"]') as HTMLInputElement | HTMLSelectElement | null;
-
-      return productInput ? productInput.value : null;
+      return PrintessIntegrationLauncher.getProductIdForElement(button.printessGetAddToBasketForm());
     };
 
     button.printessGetAddToBasketButton = () => {
-      return basketButton;
+      return resolveAddToBasketButton();
     };
 
     button.printessRemoveButton = () => {
       button.printessSetStatus("hidden");
+
+      buttonWasRemoved = true;
 
       button.remove();
     };
@@ -558,6 +821,10 @@ export class PrintessIntegrationLauncher {
   private static getPreloadedProduct(productId: number, settings: IShopifySettings): IProduct | null {
     let ret: IProduct | null = null;
     const optionNameLookUp: Record<number, string> = {};
+
+    if (settings && settings.disableProductPreload === true) {
+      return null;
+    }
 
     if (settings && settings.product && productId === settings.product.id) {
       ret = settings.product;
@@ -637,7 +904,7 @@ export class PrintessIntegrationLauncher {
                 let key = propertyName;
                 let value = metaData.metaFields[propertyName];
 
-                if (propertyName === "settings") {
+                if (propertyName === "settings" || propertyName === "variantSettings") {
                   key = "printessSettings";
 
                   if (typeof value !== "string") {
@@ -656,12 +923,273 @@ export class PrintessIntegrationLauncher {
     return ret;
   }
 
+  /**
+   * Renames the options of the preloaded product (rendered by liquid in the language of the storefront) to the
+   * names the api delivers, so the product looks exactly like one loaded from the api. The storefront names are
+   * kept as localizedName, the inputs of the theme still use them.
+   *
+   * Option values are matched by id, which does not depend on the language, or by their order if the ids are
+   * missing. Variants are matched by option position.
+   */
+  private static renamePreloadedOptions(settings: IShopifySettings, apiOptions: IProductOption<number>[]): void {
+    const product = settings.product;
+
+    if (!product || !product.productOptions) {
+      return;
+    }
+
+    //Per option position: storefront value name -> api value name
+    const valueLookUp: Record<number, Record<string, string>> = {};
+    const optionNameLookUp: Record<number, string> = {};
+
+    product.productOptions.forEach((option) => {
+      const apiOption = apiOptions.find((x) => x.position === option.position);
+
+      if (!apiOption) {
+        optionNameLookUp[option.position] = option.name;
+        return;
+      }
+
+      const lookUp: Record<string, string> = {};
+      const apiValues = apiOption.optionValues || [];
+
+      option.optionValues = (option.optionValues || []).map((value, index) => {
+        let apiValue = apiValues.find((x) => x.id === value.id);
+
+        if (!apiValue && apiValues.length === option.optionValues.length) {
+          apiValue = apiValues[index];
+        }
+
+        if (!apiValue) {
+          return value;
+        }
+
+        lookUp[value.name] = apiValue.name;
+
+        //A copy, the values are shared with settings.productOptions
+        return {
+          ...value,
+          name: apiValue.name,
+          localizedName: value.name
+        };
+      });
+
+      valueLookUp[option.position] = lookUp;
+      optionNameLookUp[option.position] = apiOption.name;
+      option.localizedName = option.name;
+      option.name = apiOption.name;
+    });
+
+    const renameValue = (position: number, value: string): string => {
+      const lookUp = valueLookUp[position];
+
+      return lookUp && typeof lookUp[value] === "string" ? lookUp[value] : value;
+    };
+
+    (product.variants || []).forEach((variant) => {
+      if (!variant.options) {
+        return;
+      }
+
+      variant.options = variant.options.map((value, index) => renameValue(index + 1, value));
+      variant.option1 = variant.options.length > 0 ? variant.options[0] : variant.option1;
+      variant.option2 = variant.options.length > 1 ? variant.options[1] : variant.option2;
+      variant.option3 = variant.options.length > 2 ? variant.options[2] : variant.option3;
+      variant.optionLookup = variant.options.map((value, index) => {
+        return {
+          name: optionNameLookUp[index + 1] || "",
+          value: value
+        };
+      });
+    });
+  }
+
   public static getEditorButtons() {
     return [...PrintessIntegrationLauncher.editorButtons || []];
   }
 
   public static getSlimuiButtons() {
     return [...PrintessIntegrationLauncher.slimUiButtons || []];
+  }
+
+  private static async registerAddToBasketButtonListener(settings: IShopifySettings, pluginProvider: IPluginContainer, graphQlApi?: IPrintessShopifyGraphQlApi | null): Promise<void> {
+    let debounceTimer: number | null = null;
+
+    if (!graphQlApi) {
+      const exports = await PrintessIntegrationLauncher.importIntoGlobalNamespace(settings.integrationUrl + "printess-graphql-api.js");
+
+      if (typeof createPrintessShopifyApi === "undefined" && typeof exports["createPrintessShopifyApi"] === "undefined") {
+        return;
+      }
+
+      graphQlApi = (createPrintessShopifyApi || exports["createPrintessShopifyApi"])(settings.apiDomain || "", settings.shopToken, settings.graphQlToken, settings.graphQlLanguage || "");
+    }
+
+    const addToBasketButtonSelector = PrintessIntegrationLauncher.getAddToBasketButtonSelector(settings);
+
+    const getKnownButtons = (): IIntegrationButton[] => {
+      return [...(PrintessIntegrationLauncher.editorButtons || []), ...(PrintessIntegrationLauncher.slimUiButtons || [])];
+    };
+
+    /**
+     * Themes like "Prestige" rerender the complete product form on variant switch. This removes our design now
+     * button and the add to basket button we keep in memory from the dom. Instead of creating a second
+     * integration we move the existing instance next to the newly rendered add to basket button and let it
+     * point to that new button.
+     */
+    const reattachExistingButton = (addToBasketButton: HTMLElement): boolean => {
+      const detachedButtons = getKnownButtons().filter((x) => typeof x.printessIsAttached === "function" && !x.printessIsAttached());
+
+      if (detachedButtons.length === 0) {
+        return false;
+      }
+
+      const productId = PrintessIntegrationLauncher.getProductIdForElement(addToBasketButton);
+
+      let existingButton: IIntegrationButton | null = null;
+
+      if (productId) {
+        existingButton = detachedButtons.find((x) => x.product && (x.product.id || "").toString() === productId) || null;
+      }
+
+      if (!existingButton && detachedButtons.length === 1 && getKnownButtons().length === 1) {
+        existingButton = detachedButtons[0];
+      }
+
+      if (!existingButton || typeof existingButton.printessSetAddToBasketButton !== "function") {
+        return false;
+      }
+
+      existingButton.printessSetAddToBasketButton(addToBasketButton);
+
+      const integration = existingButton.integration;
+
+      if (integration && typeof (<any>integration).onIntegrationButtonReattached === "function") {
+        try {
+          (<any>integration).onIntegrationButtonReattached(existingButton);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      return true;
+    };
+
+    const processPendingButtons = async (): Promise<void> => {
+      //Heal buttons whose add to basket button (or our own button) got removed by a rerender of the theme
+      getKnownButtons().forEach((knownButton) => {
+        if (typeof knownButton.printessIsAttached === "function" && !knownButton.printessIsAttached()) {
+          //Triggers the lookup of the current add to basket button and moves our button back into the dom
+          knownButton.printessGetAddToBasketButton();
+        }
+      });
+
+      const addToBasketButtons = document.querySelectorAll(addToBasketButtonSelector);
+
+      for (const addToBasketButton of addToBasketButtons) {
+        if (addToBasketButton.getAttribute("data-printess-attached") || (addToBasketButton as HTMLElement).matches(".printess-integration-button") || (addToBasketButton as HTMLElement).matches(".printess-direct-to-basket-button")) {
+          continue;
+        }
+
+        if (reattachExistingButton(addToBasketButton as HTMLElement)) {
+          continue;
+        }
+
+        addToBasketButton.setAttribute("data-printess-attached", "true");
+
+        const designNowButton = PrintessIntegrationLauncher.createDesignNowButton(addToBasketButton as HTMLElement, addToBasketButtonSelector, settings.captions?.loadingButtonText || "Loading ...", settings.captions?.designNow || "Design now", settings.captions?.addToBasket || "Add to basket", settings.designButtonClasses);
+
+        addToBasketButton.after(designNowButton);
+
+        const type = await this.initializeIntegrationButton(settings, designNowButton, graphQlApi);
+
+        if (type == "editor") {
+          //initializeIntegrationButton already registered the button in editorButtons
+          const exports = await PrintessIntegrationLauncher.importIntoGlobalNamespace(settings.integrationUrl + "printess-shopify.js");
+
+          if (exports && typeof exports["PrintessShopify"] !== "undefined" && typeof (<any>exports["PrintessShopify"]).createProductIntegration !== "undefined") {
+
+            (<any>exports["PrintessShopify"]).createProductIntegration(settings, designNowButton, pluginProvider).then((integration: IIntegration) => {
+              designNowButton.integration = integration;
+
+              //Trigger execution of all init callbacks
+              designNowButton.executeAfterInitialization((btn: IIntegrationButton) => { });
+            });
+          }
+        } else if (type == "slimui") {
+          //initializeIntegrationButton already registered the button in slimUiButtons
+          const exports = await PrintessIntegrationLauncher.importIntoGlobalNamespace(settings.integrationUrl + "printess-shopify-slimui.js");
+
+          if (exports && typeof exports["PrintessShopifySlimUi"] !== "undefined" && typeof (<any>exports["PrintessShopifySlimUi"]).create !== "undefined") {
+            (<any>exports["PrintessShopifySlimUi"]).create(settings, designNowButton, pluginProvider).then((integration: IIntegration) => {
+              designNowButton.integration = integration;
+
+              //Trigger execution of all init callbacks
+              designNowButton.executeAfterInitialization((btn: IIntegrationButton) => { });
+            });
+          }
+        }
+      }
+    };
+
+    const scheduleProcessPendingButtons = (): void => {
+      if (debounceTimer !== null) {
+        window.clearTimeout(debounceTimer);
+      }
+
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = null;
+
+        processPendingButtons();
+      }, 100);
+    };
+
+    const isButtonElement = (element: Element): boolean => {
+      return element.tagName === 'BUTTON' || (element.tagName === 'INPUT' && ((element as HTMLInputElement).type === 'button' || (element as HTMLInputElement).type === 'submit'));
+    };
+
+    const containsButton = (element: Element): boolean => {
+      //Themes which rerender whole page sections add/remove a container, not the button itself
+      return isButtonElement(element) || !!element.querySelector('button,input[type="button"],input[type="submit"]');
+    };
+
+    const callback = (mutationsList: MutationRecord[]): void => {
+      let doSchedule = false;
+
+      for (const mutation of mutationsList) {
+        if (mutation.type === 'childList') {
+          const changedNodes = [mutation.addedNodes, mutation.removedNodes];
+
+          for (const nodeList of changedNodes) {
+            for (let i = 0; i < nodeList.length; ++i) {
+              if (nodeList[i].nodeType === Node.ELEMENT_NODE && containsButton(nodeList[i] as Element)) {
+                doSchedule = true;
+                break;
+              }
+            }
+
+            if (doSchedule) {
+              break;
+            }
+          }
+
+          if (doSchedule) {
+            break;
+          }
+        }
+      }
+
+      if (doSchedule) {
+        scheduleProcessPendingButtons();
+      }
+    };
+
+    const observer = new MutationObserver(callback);
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
   }
 }
 

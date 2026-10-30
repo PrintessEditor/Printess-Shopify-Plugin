@@ -1,3 +1,29 @@
+/**
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2026 Printess GmbH & Co. Kg
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Printess GmbH & Co. Kg does not provide any support for this plugin.
+ */
+
 import { iExternalBookSettings, iFormFieldProperty, iMergeTemplate, IShopData } from "./printess-editor.d";
 import { IIntegration } from "./printess-shopify.d";
 import { INameValuePair, IFormFieldMapping, IPluginContext, IPlugin, TInitializeType, ISaveFormFieldAsPropertyEntry, IEditorSettings, IPriceInformation, IPricingInfo, IPrintessProduct as IProduct, IPrintessProductVariant as IVariant, TVariantPersonalizationOption } from "./printess-plugins.d";
@@ -1042,34 +1068,65 @@ export class PrintessPluginHost implements IPluginHost {
     return null;
   }
 
+  /**
+   * Entries a form field value is written to the cart item as a separate property for. Accepts a plain form field
+   * name, which is used as property name as well, or a serialized ISaveFormFieldAsPropertyEntry[]. Every returned
+   * entry has a property name, form field entries without a form field name are dropped.
+   */
   public static parseFormFieldsAsProperties(formFieldName?: string | ISaveFormFieldAsPropertyEntry[] | null): ISaveFormFieldAsPropertyEntry[] {
     if (!formFieldName) {
       return [];
     }
 
+    let entries: ISaveFormFieldAsPropertyEntry[] = [];
+
     if (typeof formFieldName === "string") {
       try {
-        const ret = JSON.parse(formFieldName);
+        const parsed = JSON.parse(formFieldName);
 
-        if (typeof ret != "string") {
-          return Array.isArray(ret) ? ret : [ret];
+        if (typeof parsed != "string") {
+          entries = Array.isArray(parsed) ? parsed : [parsed];
         } else {
-          return [{
-            defaultValue: "",
-            formfieldName: ret,
-            propertyName: ret,
-          }] as ISaveFormFieldAsPropertyEntry[]
+          entries = [{ formfieldName: parsed }];
         }
       } catch {
-        return [{
-          defaultValue: "",
-          formfieldName: formFieldName,
-          propertyName: formFieldName,
-        }] as ISaveFormFieldAsPropertyEntry[]
+        entries = [{ formfieldName: formFieldName }];
       }
+    } else {
+      entries = Array.isArray(formFieldName) ? formFieldName : [formFieldName];
     }
 
-    return Array.isArray(formFieldName) ? formFieldName : [formFieldName];
+    return entries.filter((x) => {
+      return x && x.formfieldName;
+    }).map((x) => {
+      return {
+        formfieldName: x.formfieldName,
+        propertyName: x.propertyName || x.formfieldName,
+        defaultValue: x.defaultValue || ""
+      };
+    });
+  }
+
+  /**
+   * Extends already resolved entries with additional ones, both in the order they are configured in. The current
+   * entries are kept as they are, an additional entry writing an already taken property name is dropped.
+   */
+  public static mergeFormFieldsAsProperties(current?: string | ISaveFormFieldAsPropertyEntry[] | null, additional?: string | ISaveFormFieldAsPropertyEntry[] | null): ISaveFormFieldAsPropertyEntry[] {
+    const ret = PrintessPluginHost.parseFormFieldsAsProperties(current);
+    const takenPropertyNames = ret.map((x) => {
+      return (x.propertyName || x.formfieldName).toLowerCase();
+    });
+
+    PrintessPluginHost.parseFormFieldsAsProperties(additional).forEach((x) => {
+      const propertyName = (x.propertyName || x.formfieldName).toLowerCase();
+
+      if (takenPropertyNames.indexOf(propertyName) === -1) {
+        takenPropertyNames.push(propertyName);
+        ret.push(x);
+      }
+    });
+
+    return ret;
   }
 
   public async getFormFieldsAsPropertiesAsync(context: IPluginContext, currentValue?: ISaveFormFieldAsPropertyEntry[] | string | null): Promise<ISaveFormFieldAsPropertyEntry[] | string | null> {
@@ -1265,5 +1322,28 @@ export class PrintessPluginHost implements IPluginHost {
     }
 
     return ret;
+  }
+
+  public async getEditorThemeAsync(context: IPluginContext, currentValue: string): Promise<string> {
+    let ret: string = currentValue;
+    const plugins = this.getPlugins();
+
+    for (let i = 0; i < plugins.length; ++i) {
+      const plugin = plugins[i];
+
+      try {
+        if (typeof plugin.getEditorThemeAsync === "function") {
+          const val = await PrintessPluginHost.waitForResult(plugin.getEditorThemeAsync(context, ret));
+
+          if (typeof val !== "undefined" && val) {
+            ret = val;
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    return ret || "DEFAULT";
   }
 }
